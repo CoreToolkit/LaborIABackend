@@ -1,7 +1,6 @@
 from fastapi import FastAPI
+from api import auth
 
 app = FastAPI()
 
-@app.get("/")
-def hola():
-    return {"message": "Hola Mundo desde FastAPI"}
+app.include_router(auth.router)
