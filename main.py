@@ -1,5 +1,4 @@
 import os
-
 from dotenv import load_dotenv
 from fastapi import FastAPI
 
@@ -14,7 +13,6 @@ except ImportError:  # pragma: no cover - fallback for test env without starlett
             return self.app(scope, receive, send)
 
 from api import auth
-
 # Carga variables desde .env
 load_dotenv()
 
