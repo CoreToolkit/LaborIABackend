@@ -1,7 +1,10 @@
 import os
 from dotenv import load_dotenv
-from fastapi import FastAPI
 load_dotenv()
+from fastapi import FastAPI
+from core.database import engine, Base
+import models
+
 
 try:
     from starlette.middleware.sessions import SessionMiddleware
@@ -16,6 +19,11 @@ except ImportError:  # pragma: no cover - fallback for test env without starlett
 from api import auth
 # Carga variables desde .env
 
+try:
+    Base.metadata.create_all(bind=engine)
+except Exception as e:
+    print(f"Could not create tables: {e}")
+
 
 app = FastAPI()
 
@@ -25,3 +33,5 @@ app.add_middleware(
 )
 
 app.include_router(auth.router)
+
+
