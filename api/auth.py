@@ -4,10 +4,9 @@ import os
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Request, Depends, HTTPException, Query
-from fastapi.responses import RedirectResponse
 
 from core.oauth import oauth
-from core.jwt import create_token, get_current_user
+from core.jwt import create_token, create_refresh_token, decode_refresh_token, get_current_user
 from core.microsoft import (
     exchange_code_for_tokens,
     fetch_user_from_graph,
@@ -70,6 +69,28 @@ async def logout():
 @router.get("/me")
 async def get_me(user: dict = Depends(get_current_user)):
     return user
+
+
+@router.post("/refresh")
+async def refresh_token(refresh_token: str = Query(None, description="Application refresh token")):
+    if not refresh_token:
+        raise HTTPException(status_code=400, detail="Missing refresh token")
+
+    data = decode_refresh_token(refresh_token)
+    user_email = data.get("email")
+    user_name = data.get("name")
+
+    if not user_email:
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
+
+    new_access = create_token({"email": user_email, "name": user_name})
+    new_refresh = create_refresh_token({"email": user_email, "name": user_name})
+
+    return {
+        "access_token": new_access,
+        "refresh_token": new_refresh,
+        "token_type": "bearer",
+    }
 
 @router.get(
     "/microsoft",
