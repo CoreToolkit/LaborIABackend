@@ -25,21 +25,21 @@ def install():
 
 def test():
     run_command(
-        "pytest",
+        f"{sys.executable} -m pytest",
         "Ejecutando tests"
     )
 
 
 def coverage():
     run_command(
-        "pytest --cov --cov-branch --cov-report=term-missing --cov-report=html --cov-fail-under=80",
+        f"{sys.executable} -m pytest --cov --cov-branch --cov-report=term-missing --cov-report=html --cov-fail-under=80",
         "Calculando coverage"
     )
 
 
 def run():
     run_command(
-        "uvicorn main:app --reload",
+        f"{sys.executable} -m uvicorn main:app --reload",
         "Levantando API"
     )
 
