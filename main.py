@@ -1,6 +1,7 @@
 import os
 from dotenv import load_dotenv
 from fastapi import FastAPI
+load_dotenv()
 
 try:
     from starlette.middleware.sessions import SessionMiddleware
@@ -14,7 +15,7 @@ except ImportError:  # pragma: no cover - fallback for test env without starlett
 
 from api import auth
 # Carga variables desde .env
-load_dotenv()
+
 
 app = FastAPI()
 
