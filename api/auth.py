@@ -144,7 +144,15 @@ def microsoft_callback(
     if not user or not user.get("email"):
         raise HTTPException(status_code=500, detail="Unable to extract Microsoft user profile.")
 
-    # Placeholder mientras JWT
-    app_token = f"PENDING_APP_JWT::{user['email']}"
+    app_token = create_token(
+        {
+            "email": user["email"],
+            "name": user.get("name"),
+        }
+    )
 
-    return {"user": user, "token": app_token, "state": state}
+    return {
+        "message": "Login successful",
+        "access_token": app_token,
+        "token_type": "bearer",
+    }

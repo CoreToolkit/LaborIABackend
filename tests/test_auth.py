@@ -5,6 +5,7 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 from fastapi.testclient import TestClient
 from main import app
+import api.auth as auth_module
 
 client = TestClient(app)
 
@@ -31,7 +32,7 @@ def test_auth():
     #response = client.get("/auth/google")
     #assert response.status_code == 200
     #assert response.json() == {"url": "https://accounts.google.com/..."}
-
+    pass
 
 def test_microsoft_auth(monkeypatch):
     monkeypatch.setenv("MICROSOFT_CLIENT_ID", "test-client-id")
@@ -86,6 +87,7 @@ def test_microsoft_callback_success_with_id_token(monkeypatch):
     monkeypatch.setenv("MICROSOFT_CLIENT_SECRET", "test-secret")
     monkeypatch.setenv("MICROSOFT_REDIRECT_URI", "http://localhost:8000/auth/microsoft/callback")
     monkeypatch.setenv("MICROSOFT_TENANT_ID", "organizations")
+    monkeypatch.setenv("JWT_SECRET", "secret")
 
     id_token = _make_id_token({"email": "user@example.com", "name": "Example User"})
 
@@ -93,19 +95,21 @@ def test_microsoft_callback_success_with_id_token(monkeypatch):
         return DummyResponse(200, {"access_token": "access", "id_token": id_token})
 
     monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(auth_module, "create_token", lambda payload: "test-jwt")
 
     response = client.get("/auth/microsoft/callback", params={"code": "abc123"})
 
     assert response.status_code == 200
     data = response.json()
-    assert data["user"] == {"email": "user@example.com", "name": "Example User"}
-    assert data["token"].startswith("PENDING_APP_JWT::user@example.com")
+    assert data["access_token"] == "test-jwt"
+    assert data["token_type"] == "bearer"
 
 
 def test_microsoft_callback_fallback_graph(monkeypatch):
     monkeypatch.setenv("MICROSOFT_CLIENT_ID", "test-client-id")
     monkeypatch.setenv("MICROSOFT_CLIENT_SECRET", "test-secret")
     monkeypatch.setenv("MICROSOFT_REDIRECT_URI", "http://localhost:8000/auth/microsoft/callback")
+    monkeypatch.setenv("JWT_SECRET", "secret")
 
     def fake_post(url, data=None, headers=None, timeout=None):
         return DummyResponse(200, {"access_token": "access-token"})
@@ -116,12 +120,13 @@ def test_microsoft_callback_fallback_graph(monkeypatch):
 
     monkeypatch.setattr(httpx, "post", fake_post)
     monkeypatch.setattr(httpx, "get", fake_get)
+    monkeypatch.setattr(auth_module, "create_token", lambda payload: "test-jwt-graph")
 
     response = client.get("/auth/microsoft/callback", params={"code": "abc123"})
 
     assert response.status_code == 200
     data = response.json()
-    assert data["user"] == {"email": "graph@example.com", "name": "Graph User"}
+    assert data["access_token"] == "test-jwt-graph"
 
 
 def test_microsoft_callback_token_exchange_failure(monkeypatch):
