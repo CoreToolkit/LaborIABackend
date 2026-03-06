@@ -3,6 +3,7 @@ from fastapi import HTTPException, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from datetime import datetime, timedelta, timezone
 import os
+import uuid
 
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = 24
@@ -13,6 +14,7 @@ security = HTTPBearer()
 
 def create_token(data: dict) -> str:
     payload = data.copy()
+    payload["jti"] = str(uuid.uuid4())   # unique token ID for blacklisting
     payload["exp"] = datetime.now(timezone.utc) + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
     return jwt.encode(payload, os.getenv("JWT_SECRET"), algorithm=ALGORITHM)
 
