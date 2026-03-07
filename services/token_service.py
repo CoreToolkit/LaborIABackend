@@ -1,6 +1,8 @@
 from fastapi import HTTPException, Request, status
 
 from core import jwt as jwt_core
+from core.database import SessionLocal
+from services import token_blacklist_service
 
 
 def extract_bearer_token(request: Request) -> str:
@@ -20,5 +22,21 @@ def extract_bearer_token(request: Request) -> str:
 
 
 def validate_jwt_token(token: str) -> dict:
-    # TODO: Integrar blacklist de tokens revocados
-    return jwt_core.decode_token(token)
+    payload = jwt_core.decode_token(token)
+
+    db = SessionLocal()
+    try:
+        try:
+            is_revoked = token_blacklist_service.is_token_blacklisted(db, payload.get("jti"))
+        except Exception:
+            is_revoked = False  # Si falla la BD, no bloqueamos pero registramos en futuro
+
+        if is_revoked:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token has been revoked",
+            )
+    finally:
+        db.close()
+
+    return payload

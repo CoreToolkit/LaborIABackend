@@ -1,13 +1,22 @@
 
 import time
 import os
+import datetime as dt
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Request, Depends, HTTPException, Query
+from fastapi import APIRouter, Request, Depends, HTTPException, Query, Security
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
 from core.oauth import oauth
-from core.jwt import create_token, create_refresh_token, decode_refresh_token, get_current_user
+from core.jwt import (
+    create_token,
+    create_refresh_token,
+    decode_refresh_token,
+    decode_token,
+    get_current_user,
+    security,
+)
 from core.database import get_db
 from services.user_service import UserService
 from core.microsoft import (
@@ -15,6 +24,7 @@ from core.microsoft import (
     fetch_user_from_graph,
     user_from_id_token,
 )
+from services import token_blacklist_service
 
 router = APIRouter(
     prefix="/auth",
@@ -73,8 +83,30 @@ async def google_callback(request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/logout")
-async def logout():
-    return {"message": "Logged out. Discard your access_token on the client side."}
+async def logout(
+    credentials: HTTPAuthorizationCredentials = Security(security),
+    db: Session = Depends(get_db),
+):
+    token = credentials.credentials
+
+    try:
+        payload = decode_token(token)
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    jti = payload.get("jti")
+    exp_ts = payload.get("exp")
+    expires_at = dt.datetime.fromtimestamp(exp_ts, dt.timezone.utc) if exp_ts else dt.datetime.utcnow()
+
+    token_blacklist_service.add_to_blacklist(
+        db=db,
+        token_jti=jti,
+        expires_at=expires_at,
+    )
+
+    return {"message": "Logout successful"}
 
 
 @router.get("/me")
@@ -140,6 +172,7 @@ def microsoft_login():
 def microsoft_callback(
     code: str | None = Query(None, description="Authorization code returned by Microsoft."),
     state: str | None = Query(None, description="Opaque state for CSRF protection."),
+    db: Session = Depends(get_db),
 ):
     if not code:
         raise HTTPException(status_code=400, detail="Missing authorization code from Microsoft.")
@@ -176,10 +209,19 @@ def microsoft_callback(
     if not user or not user.get("email"):
         raise HTTPException(status_code=500, detail="Unable to extract Microsoft user profile.")
 
+    db_user = UserService(db).get_or_create_user(
+        email=user["email"],
+        name=user.get("name") or "",
+        profile_picture=None,
+        oauth_provider="microsoft",
+    )
+
     app_token = create_token(
         {
-            "email": user["email"],
-            "name": user.get("name"),
+            "id": db_user.id,
+            "email": db_user.email,
+            "name": db_user.name,
+            "picture": db_user.profile_picture,
         }
     )
 

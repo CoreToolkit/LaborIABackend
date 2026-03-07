@@ -1,4 +1,3 @@
-import base64
 import json
 from typing import Dict, Optional
 
@@ -33,7 +32,10 @@ def fetch_user_from_graph(access_token: str) -> Dict[str, str]:
     if resp.status_code != 200:
         raise HTTPException(status_code=401, detail="Failed to fetch Microsoft user profile.")
     data = resp.json()
-    return {"email": data.get("mail") or data.get("userPrincipalName"), "name": data.get("displayName")}
+    return {
+        "email": data.get("mail") or data.get("userPrincipalName"),
+        "name": data.get("displayName"),
+    }
 
 
 def exchange_code_for_tokens(

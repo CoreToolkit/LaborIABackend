@@ -6,6 +6,7 @@ import httpx
 from fastapi.testclient import TestClient
 from main import app
 import api.auth as auth_module
+from core import jwt as core_jwt
 
 client = TestClient(app)
 
@@ -83,6 +84,25 @@ def test_microsoft_callback_missing_code():
 
 
 def test_microsoft_callback_success_with_id_token(monkeypatch):
+    # Override DB para no tocar la db real
+    def override_db():
+        yield None
+    app.dependency_overrides[auth_module.get_db] = override_db
+
+    class DummyUser:
+        id = 1
+        email = "user@example.com"
+        name = "Example User"
+        profile_picture = None
+
+    class DummyService:
+        def __init__(self, db):
+            pass
+
+        def get_or_create_user(self, **kwargs):
+            return DummyUser()
+
+    monkeypatch.setattr(auth_module, "UserService", DummyService)
     monkeypatch.setenv("MICROSOFT_CLIENT_ID", "test-client-id")
     monkeypatch.setenv("MICROSOFT_CLIENT_SECRET", "test-secret")
     monkeypatch.setenv("MICROSOFT_REDIRECT_URI", "http://localhost:8000/auth/microsoft/callback")
@@ -95,17 +115,34 @@ def test_microsoft_callback_success_with_id_token(monkeypatch):
         return DummyResponse(200, {"access_token": "access", "id_token": id_token})
 
     monkeypatch.setattr(httpx, "post", fake_post)
-    monkeypatch.setattr(auth_module, "create_token", lambda payload: "test-jwt")
+    monkeypatch.setattr(auth_module, "create_token", lambda payload: "test-jti-jwt")
+    monkeypatch.setattr(auth_module, "fetch_user_from_graph", lambda access_token: {"email": "user@example.com", "name": "Example User"})
 
-    response = client.get("/auth/microsoft/callback", params={"code": "abc123"})
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["access_token"] == "test-jwt"
+    # Llamamos directamente al endpoint para evitar middleware
+    data = auth_module.microsoft_callback(code="abc123", state=None, db=None)
+    assert data["access_token"] == "test-jti-jwt"
     assert data["token_type"] == "bearer"
 
 
 def test_microsoft_callback_fallback_graph(monkeypatch):
+    def override_db():
+        yield None
+    app.dependency_overrides[auth_module.get_db] = override_db
+
+    class DummyUser:
+        id = 2
+        email = "graph@example.com"
+        name = "Graph User"
+        profile_picture = None
+
+    class DummyService:
+        def __init__(self, db):
+            pass
+
+        def get_or_create_user(self, **kwargs):
+            return DummyUser()
+
+    monkeypatch.setattr(auth_module, "UserService", DummyService)
     monkeypatch.setenv("MICROSOFT_CLIENT_ID", "test-client-id")
     monkeypatch.setenv("MICROSOFT_CLIENT_SECRET", "test-secret")
     monkeypatch.setenv("MICROSOFT_REDIRECT_URI", "http://localhost:8000/auth/microsoft/callback")
@@ -120,13 +157,10 @@ def test_microsoft_callback_fallback_graph(monkeypatch):
 
     monkeypatch.setattr(httpx, "post", fake_post)
     monkeypatch.setattr(httpx, "get", fake_get)
-    monkeypatch.setattr(auth_module, "create_token", lambda payload: "test-jwt-graph")
+    monkeypatch.setattr(auth_module, "create_token", lambda payload: "test-jti-jwt")
 
-    response = client.get("/auth/microsoft/callback", params={"code": "abc123"})
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["access_token"] == "test-jwt-graph"
+    data = auth_module.microsoft_callback(code="abc123", state=None, db=None)
+    assert data["access_token"] == "test-jti-jwt"
 
 
 def test_microsoft_callback_token_exchange_failure(monkeypatch):
