@@ -1,6 +1,6 @@
 import json
 from typing import Dict, Optional
-
+import base64
 import httpx
 from fastapi import HTTPException
 
