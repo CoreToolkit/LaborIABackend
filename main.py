@@ -17,6 +17,7 @@ except ImportError:  # pragma: no cover - fallback for test env without starlett
             return self.app(scope, receive, send)
 
 from api import auth
+from middleware.auth_middleware import AuthMiddleware
 # Carga variables desde .env
 
 try:
@@ -30,6 +31,21 @@ app = FastAPI()
 app.add_middleware(
     SessionMiddleware,
     secret_key=os.getenv("secret_key", "dev-secret-key"),
+)
+
+# Middleware de autenticación JWT (excluye rutas públicas)
+app.add_middleware(
+    AuthMiddleware,
+    excluded_paths=[
+        "/auth/microsoft",
+        "/auth/microsoft/callback",
+        "/auth/refresh",
+        "/auth/google",
+        "/auth/google/callback",
+        "/docs",
+        "/openapi.json",
+        "/health",
+    ],
 )
 
 app.include_router(auth.router)
