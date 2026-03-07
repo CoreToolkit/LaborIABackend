@@ -4,9 +4,12 @@ import os
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Request, Depends, HTTPException, Query
+from sqlalchemy.orm import Session
 
 from core.oauth import oauth
 from core.jwt import create_token, create_refresh_token, decode_refresh_token, get_current_user
+from core.database import get_db
+from services.user_service import UserService
 from core.microsoft import (
     exchange_code_for_tokens,
     fetch_user_from_graph,
@@ -30,7 +33,7 @@ async def login_google(request: Request):
 
 
 @router.get("/google/callback")
-async def google_callback(request: Request):
+async def google_callback(request: Request, db: Session = Depends(get_db)):
     try:
         state = request.query_params.get("state")
         if state:
@@ -43,10 +46,18 @@ async def google_callback(request: Request):
         token = await oauth.google.authorize_access_token(request)
         resp = await oauth.google.userinfo(token=token)
 
+        db_user = UserService(db).get_or_create_user(
+            email=resp["email"],
+            name=resp["name"],
+            profile_picture=resp.get("picture"),
+            oauth_provider="google",
+        )
+
         access_token = create_token({
-            "email": resp["email"],
-            "name":  resp["name"],
-            "picture": resp["picture"]
+            "id": db_user.id,
+            "email": db_user.email,
+            "name": db_user.name,
+            "picture": db_user.profile_picture,
         })
 
         return {
