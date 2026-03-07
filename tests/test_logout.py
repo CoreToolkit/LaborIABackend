@@ -1,12 +1,10 @@
-import datetime as dt
-
 import pytest
 import api.auth as auth_module
+
 pytest.importorskip("sqlalchemy")
 
 from fastapi.testclient import TestClient
 from dotenv import load_dotenv
-import os
 
 from core import jwt as core_jwt
 from core.database import Base, engine, SessionLocal
@@ -19,12 +17,14 @@ Base.metadata.create_all(bind=engine)
 
 def test_logout_blacklists_token():
     load_dotenv()
+
     def override_db():
         db = SessionLocal()
         try:
             yield db
         finally:
             db.close()
+
     app.dependency_overrides = {}
     app.dependency_overrides[auth_module.get_db] = override_db
 
@@ -42,3 +42,12 @@ def test_logout_blacklists_token():
     # Después del logout, el mismo token debe ser rechazado
     resp_fail = client.get("/auth/me", headers={"Authorization": f"Bearer {access_token}"})
     assert resp_fail.status_code == 401
+
+
+def test_access_token_expired_rejected(monkeypatch):
+    load_dotenv()
+    monkeypatch.setattr(core_jwt, "ACCESS_TOKEN_EXPIRE_HOURS", -1)
+    expired = core_jwt.create_token({"email": "user@example.com", "name": "User"})
+
+    resp = client.get("/auth/me", headers={"Authorization": f"Bearer {expired}"})
+    assert resp.status_code == 401

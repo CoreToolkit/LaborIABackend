@@ -193,3 +193,9 @@ def test_microsoft_callback_missing_access_token(monkeypatch):
 
     assert response.status_code == 401
     assert "missing access token" in response.json()["detail"].lower()
+
+
+def test_me_without_token_returns_401():
+    response = client.get("/auth/me")
+    assert response.status_code == 401
+    assert response.json()["detail"] in ("Authorization header missing or malformed", "Unauthorized")
