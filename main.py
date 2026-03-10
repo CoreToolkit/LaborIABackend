@@ -4,6 +4,7 @@ load_dotenv()
 from fastapi import FastAPI
 from core.database import engine, Base
 import models
+from fastapi.middleware.cors import CORSMiddleware
 
 
 try:
@@ -28,6 +29,16 @@ except Exception as e:
 
 app = FastAPI()
 
+local_host_front = os.getenv("LOCAL_HOST_FRONT")
+local_ip = os.getenv("LOCAL_IP")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[local_host_front, local_ip],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.add_middleware(
     SessionMiddleware,
     secret_key=os.getenv("secret_key", "dev-secret-key"),
@@ -41,7 +52,7 @@ app.add_middleware(
         "/auth/microsoft/callback",
         "/auth/refresh",
         "/auth/google",
-        "/auth/google/callback",
+        "/auth/google/exchange",
         "/docs",
         "/openapi.json",
         "/health",

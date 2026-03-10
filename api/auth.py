@@ -42,6 +42,51 @@ async def login_google(request: Request):
     }
 
 
+@router.post("/google/exchange")
+async def google_exchange(request: Request, db: Session = Depends(get_db)):
+    try:
+        data = await request.json()
+        code = data.get("code")
+        state = data.get("state")
+
+        redirect_uri = os.getenv("GOOGLE_REDIRECT_URI")
+        token = await oauth.google.fetch_access_token(
+            code=code,
+            redirect_uri=redirect_uri
+        )
+
+        resp = await oauth.google.userinfo(token=token)
+
+        db_user = UserService(db).get_or_create_user(
+            email=resp["email"],
+            name=resp["name"],
+            profile_picture=resp.get("picture"),
+            oauth_provider="google",
+        )
+
+        access_token = create_token({
+            "id": db_user.id,
+            "email": db_user.email,
+            "name": db_user.name,
+            "picture": db_user.profile_picture,
+        })
+        refresh_token = refresh_tokens_service.create_refresh_token(db, user_id=db_user.email)
+
+        return {
+            "message": "Login successful",
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "token_type": "bearer"
+        }
+    except Exception as e:
+        return {
+            "message": "Login failed",
+            "error": str(e)
+        }
+    
+
+    
+
 @router.get("/google/callback")
 async def google_callback(request: Request, db: Session = Depends(get_db)):
     try:
