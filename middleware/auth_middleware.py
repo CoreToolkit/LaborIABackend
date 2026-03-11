@@ -13,6 +13,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
 
+        # Permitir preflight CORS sin exigir token
+        if request.method == "OPTIONS":
+            return Response(status_code=200)
+
         if self._is_excluded(path):
             return await call_next(request)
 

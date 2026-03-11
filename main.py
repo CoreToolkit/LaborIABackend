@@ -50,6 +50,7 @@ app.add_middleware(
     excluded_paths=[
         "/auth/microsoft",
         "/auth/microsoft/callback",
+        "/auth/microsoft/exchange",
         "/auth/refresh",
         "/auth/google",
         "/auth/google/exchange",
