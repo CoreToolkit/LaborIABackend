@@ -33,3 +33,12 @@ def test_decode_invalid_signature(monkeypatch):
 
     with pytest.raises(Exception):
         core_jwt.decode_token(forged)
+
+
+def test_create_and_decode_refresh_token(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET", "secret-key")
+    payload = {"email": "user@example.com"}
+    token = core_jwt.create_refresh_token(payload)
+    decoded = core_jwt.decode_refresh_token(token)
+    assert decoded["email"] == payload["email"]
+    assert decoded["type"] == "refresh"
