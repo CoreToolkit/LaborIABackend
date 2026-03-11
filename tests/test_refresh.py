@@ -73,3 +73,16 @@ def test_refresh_expired(monkeypatch):
 
     resp = client.post("/auth/refresh", json={"refresh_token": expired})
     assert resp.status_code == 401
+
+
+def test_store_and_revoke_refresh_token(monkeypatch):
+    load_dotenv()
+    db = SessionLocal()
+    user = _seed_user(db)
+    token = "manual-token"
+    expires_at = dt.datetime.utcnow() + dt.timedelta(days=1)
+    refresh_tokens_service.store_refresh_token(db, user_id=user.email, token=token, expires_at=expires_at)
+    assert refresh_tokens_service.is_refresh_token_valid(db, token)
+    refresh_tokens_service.revoke_refresh_token(db, token)
+    assert not refresh_tokens_service.is_refresh_token_valid(db, token)
+    db.close()
