@@ -15,7 +15,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         # Permitir preflight CORS sin exigir token
         if request.method == "OPTIONS":
-            return Response(status_code=200)
+            return await call_next(request)
 
         if self._is_excluded(path):
             return await call_next(request)
