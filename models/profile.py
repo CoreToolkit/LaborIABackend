@@ -40,3 +40,4 @@ class Profile(Base):
     # Relationships
     user = relationship("User", back_populates="profile")  # 1-to-1
     experiences = relationship("Experience", back_populates="profile", cascade="all, delete-orphan")  # 1-to-many
+    skills = relationship("Skill", back_populates="profile", cascade="all, delete-orphan")  # 1-to-many
