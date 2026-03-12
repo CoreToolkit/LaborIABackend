@@ -37,5 +37,6 @@ class Profile(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
 
-    # Relationship 1-1
-    user = relationship("User", back_populates="profile")
+    # Relationships
+    user = relationship("User", back_populates="profile")  # 1-to-1
+    experiences = relationship("Experience", back_populates="profile", cascade="all, delete-orphan")  # 1-to-many
