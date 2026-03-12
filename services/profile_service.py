@@ -1,4 +1,5 @@
 from sqlalchemy.orm import Session
+from datetime import date
 
 from exceptions.profile_exceptions import (
     ProfileAlreadyExistsError,
@@ -50,6 +51,12 @@ class ProfileService:
                 raise ProfileValidationError(
                     f"Invalid preferred_employment_type. Valid values: {valid_values}"
                 ) from exc
+
+        if prepared.get("graduation_date") is not None and isinstance(prepared["graduation_date"], str):
+            try:
+                prepared["graduation_date"] = date.fromisoformat(prepared["graduation_date"])
+            except ValueError as exc:
+                raise ProfileValidationError("Invalid graduation_date. Use YYYY-MM-DD format") from exc
 
         return prepared
 
