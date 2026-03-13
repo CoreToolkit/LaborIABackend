@@ -4,10 +4,13 @@ from sqlalchemy.orm import Session
 from core.database import get_db
 from core.jwt import get_current_user
 from exceptions.profile_exceptions import (
+    ExperienceNotFoundError,
+    ExperienceValidationError,
     ProfileAlreadyExistsError,
     ProfileNotFoundError,
     ProfileValidationError,
 )
+from schemas.experience import ExperienceCreate, ExperienceResponse, ExperienceUpdate
 from services.profile_service import ProfileService
 
 
@@ -104,6 +107,88 @@ def delete_my_profile(
     try:
         service.delete_profile(user_id)
     except ProfileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=exc.message) from exc
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/me/experiences")
+def create_my_experience(
+    experience_data: ExperienceCreate,
+    response: Response,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    service = ProfileService(db)
+    user_id = current_user["id"]
+
+    try:
+        experience = service.create_experience(user_id, experience_data)
+    except ProfileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=exc.message) from exc
+    except ExperienceValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.message) from exc
+
+    response.status_code = status.HTTP_201_CREATED
+    return ExperienceResponse.model_validate(experience).model_dump(mode="json")
+
+
+@router.get("/me/experiences")
+def list_my_experiences(
+    response: Response,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    service = ProfileService(db)
+    user_id = current_user["id"]
+
+    try:
+        experiences = service.list_experiences(user_id)
+    except ProfileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=exc.message) from exc
+
+    response.status_code = status.HTTP_200_OK
+    return [ExperienceResponse.model_validate(experience).model_dump(mode="json") for experience in experiences]
+
+
+@router.put("/me/experiences/{experience_id}")
+def update_my_experience(
+    experience_id: int,
+    experience_data: ExperienceUpdate,
+    response: Response,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    service = ProfileService(db)
+    user_id = current_user["id"]
+
+    try:
+        experience = service.update_experience(user_id, experience_id, experience_data)
+    except ProfileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=exc.message) from exc
+    except ExperienceNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=exc.message) from exc
+    except ExperienceValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.message) from exc
+
+    response.status_code = status.HTTP_200_OK
+    return ExperienceResponse.model_validate(experience).model_dump(mode="json")
+
+
+@router.delete("/me/experiences/{experience_id}")
+def delete_my_experience(
+    experience_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    service = ProfileService(db)
+    user_id = current_user["id"]
+
+    try:
+        service.delete_experience(user_id, experience_id)
+    except ProfileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=exc.message) from exc
+    except ExperienceNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=exc.message) from exc
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)

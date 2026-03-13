@@ -1,11 +1,19 @@
+import os
 import uuid
 from datetime import date
+from pathlib import Path
 
 import pytest
 
 pytest.importorskip("sqlalchemy")
 
-from core.database import Base, SessionLocal, engine
+os.environ["DATABASE_URL"] = "sqlite:///test.db"
+os.environ["JWT_SECRET"] = "test-secret"
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from core.database import Base
 from exceptions.profile_exceptions import (
     ProfileAlreadyExistsError,
     ProfileNotFoundError,
@@ -16,7 +24,16 @@ from models.user import User
 from services.profile_service import ProfileService
 
 
-Base.metadata.create_all(bind=engine)
+TEST_DB_PATH = Path("test.db")
+test_engine = create_engine(f"sqlite:///{TEST_DB_PATH}")
+TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
+
+
+@pytest.fixture(autouse=True)
+def reset_test_database():
+    Base.metadata.drop_all(bind=test_engine)
+    Base.metadata.create_all(bind=test_engine)
+    yield
 
 
 def _create_user(db, email: str | None = None) -> User:
@@ -34,7 +51,7 @@ def _create_user(db, email: str | None = None) -> User:
 
 
 def test_create_profile_success_and_enum_conversion():
-    db = SessionLocal()
+    db = TestSessionLocal()
     try:
         user = _create_user(db)
         service = ProfileService(db)
@@ -59,7 +76,7 @@ def test_create_profile_success_and_enum_conversion():
 
 
 def test_create_profile_raises_when_user_already_has_profile():
-    db = SessionLocal()
+    db = TestSessionLocal()
     try:
         user = _create_user(db)
         service = ProfileService(db)
@@ -73,7 +90,7 @@ def test_create_profile_raises_when_user_already_has_profile():
 
 
 def test_create_profile_raises_validation_error_for_invalid_english_level():
-    db = SessionLocal()
+    db = TestSessionLocal()
     try:
         user = _create_user(db)
         service = ProfileService(db)
@@ -85,7 +102,7 @@ def test_create_profile_raises_validation_error_for_invalid_english_level():
 
 
 def test_update_profile_raises_not_found_when_profile_does_not_exist():
-    db = SessionLocal()
+    db = TestSessionLocal()
     try:
         user = _create_user(db)
         service = ProfileService(db)
@@ -97,7 +114,7 @@ def test_update_profile_raises_not_found_when_profile_does_not_exist():
 
 
 def test_update_profile_success_with_enum_conversion():
-    db = SessionLocal()
+    db = TestSessionLocal()
     try:
         user = _create_user(db)
         service = ProfileService(db)
