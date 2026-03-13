@@ -1,24 +1,53 @@
+import os
 import uuid
+from pathlib import Path
 
 import pytest
 
 pytest.importorskip("fastapi")
 pytest.importorskip("sqlalchemy")
 
-from fastapi.testclient import TestClient
+os.environ["DATABASE_URL"] = "sqlite:///test.db"
+os.environ["JWT_SECRET"] = "test-secret"
 
-from core.database import Base, SessionLocal, engine
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+import api.profiles as profiles_module
+from core.database import Base
 from core.jwt import create_token
-from main import app
 from models.user import User
 
 
-Base.metadata.create_all(bind=engine)
+TEST_DB_PATH = Path("test.db")
+test_engine = create_engine(f"sqlite:///{TEST_DB_PATH}")
+TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
+app = FastAPI()
+app.include_router(profiles_module.router)
 client = TestClient(app)
 
 
+@pytest.fixture(autouse=True)
+def reset_test_database():
+    Base.metadata.drop_all(bind=test_engine)
+    Base.metadata.create_all(bind=test_engine)
+
+    def override_db():
+        db = TestSessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[profiles_module.get_db] = override_db
+    yield
+    app.dependency_overrides.clear()
+
+
 def _create_user(email: str | None = None) -> User:
-    db = SessionLocal()
+    db = TestSessionLocal()
     try:
         unique_email = email or f"profile-controller-{uuid.uuid4().hex}@example.com"
         user = User(

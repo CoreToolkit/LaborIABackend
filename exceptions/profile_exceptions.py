@@ -16,3 +16,11 @@ class ProfileNotFoundError(ProfileError):
 
 class ProfileValidationError(ProfileError):
     default_message = "Invalid profile data"
+
+
+class ExperienceNotFoundError(ProfileError):
+    default_message = "Experience not found"
+
+
+class ExperienceValidationError(ProfileError):
+    default_message = "Invalid experience data"
