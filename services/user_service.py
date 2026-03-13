@@ -12,4 +12,7 @@ class UserService:
         user = self.repo.get_by_email(email)
         if not user:
             user = self.repo.create(email, name, profile_picture, oauth_provider)
+        else:
+            self.repo.change_last_login(user)
+            
         return user

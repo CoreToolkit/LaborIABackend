@@ -1,4 +1,5 @@
 from sqlalchemy import Column, Integer, String, DateTime
+from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from core.database import Base
 
@@ -13,3 +14,6 @@ class User(Base):
     oauth_provider = Column(String, nullable=False)         
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_login = Column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
+
+    # Relationship 1-1
+    profile = relationship("Profile", back_populates="user", uselist=False, cascade="all, delete-orphan")
