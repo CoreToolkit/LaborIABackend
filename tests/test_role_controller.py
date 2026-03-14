@@ -20,6 +20,8 @@ import api.roles as roles_module
 from core.database import Base
 from core.jwt import create_token
 from models.job_role import JobRole, JobRoleCategory, RoleEnglishLevel, SeniorityLevel
+from models.role_skill import RoleSkill
+from models.technology import Technology
 
 
 TEST_DB_PATH = Path("test.db")
@@ -88,6 +90,35 @@ def _create_role(
         db.close()
 
 
+def _create_technology(name: str) -> Technology:
+    db = TestSessionLocal()
+    try:
+        technology = Technology(name=name)
+        db.add(technology)
+        db.commit()
+        db.refresh(technology)
+        return technology
+    finally:
+        db.close()
+
+
+def _create_role_skill(role_id, technology_id: int, importance_weight: int = 8, is_required: bool = True) -> RoleSkill:
+    db = TestSessionLocal()
+    try:
+        role_skill = RoleSkill(
+            role_id=role_id,
+            technology_id=technology_id,
+            importance_weight=importance_weight,
+            is_required=is_required,
+        )
+        db.add(role_skill)
+        db.commit()
+        db.refresh(role_skill)
+        return role_skill
+    finally:
+        db.close()
+
+
 def test_list_roles_returns_paginated_payload():
     _create_role(name="Backend Developer")
     _create_role(name="Data Analyst", category=JobRoleCategory.DATA)
@@ -122,4 +153,32 @@ def test_list_roles_applies_filters():
 def test_list_roles_requires_authentication():
     response = client.get("/api/roles")
 
-    assert response.status_code == 403
+    assert response.status_code == 401
+
+
+def test_get_role_detail_returns_complete_payload():
+    role = _create_role(name="Backend Developer", seniority_level=SeniorityLevel.SENIOR, min_english_level=RoleEnglishLevel.B2)
+    technology = _create_technology("FastAPI")
+    _create_role_skill(role.id, technology.id, importance_weight=9, is_required=True)
+    headers = _auth_headers()
+
+    response = client.get(f"/api/roles/{role.id}", headers=headers)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["id"] == str(role.id)
+    assert data["name"] == "Backend Developer"
+    assert data["seniority_level"] == "senior"
+    assert len(data["role_skills"]) == 1
+    assert data["role_skills"][0]["technology_name"] == "FastAPI"
+    assert data["role_skills"][0]["importance_weight"] == 9
+    assert data["role_skills"][0]["is_required"] is True
+
+
+def test_get_role_detail_returns_404_when_role_does_not_exist():
+    headers = _auth_headers()
+
+    response = client.get(f"/api/roles/{uuid.uuid4()}", headers=headers)
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Role not found"

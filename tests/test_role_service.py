@@ -10,7 +10,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from core.database import Base
+from exceptions.role_exceptions import RoleNotFoundError
 from models.job_role import JobRole, JobRoleCategory, RoleEnglishLevel, SeniorityLevel
+from models.role_skill import RoleSkill
+from models.technology import Technology
 from services.role_service import RoleService
 
 
@@ -55,6 +58,35 @@ def _create_role(
         db.close()
 
 
+def _create_technology(name: str) -> Technology:
+    db = TestSessionLocal()
+    try:
+        technology = Technology(name=name)
+        db.add(technology)
+        db.commit()
+        db.refresh(technology)
+        return technology
+    finally:
+        db.close()
+
+
+def _create_role_skill(role_id, technology_id: int, importance_weight: int = 8, is_required: bool = True) -> RoleSkill:
+    db = TestSessionLocal()
+    try:
+        role_skill = RoleSkill(
+            role_id=role_id,
+            technology_id=technology_id,
+            importance_weight=importance_weight,
+            is_required=is_required,
+        )
+        db.add(role_skill)
+        db.commit()
+        db.refresh(role_skill)
+        return role_skill
+    finally:
+        db.close()
+
+
 def test_list_roles_returns_paginated_items():
     _create_role(name="Backend Developer")
     _create_role(name="Data Analyst", category=JobRoleCategory.DATA)
@@ -86,5 +118,34 @@ def test_list_roles_applies_filters():
         assert result["total"] == 1
         assert len(result["items"]) == 1
         assert result["items"][0].name == "Backend Developer"
+    finally:
+        db.close()
+
+
+def test_get_role_detail_returns_role_with_requirements():
+    role = _create_role(name="Backend Developer")
+    technology = _create_technology("FastAPI")
+    _create_role_skill(role.id, technology.id, importance_weight=9, is_required=True)
+
+    db = TestSessionLocal()
+    try:
+        service = RoleService(db)
+        result = service.get_role_detail(role.id)
+
+        assert result.id == role.id
+        assert result.name == "Backend Developer"
+        assert len(result.role_skills) == 1
+        assert result.role_skills[0].technology.name == "FastAPI"
+    finally:
+        db.close()
+
+
+def test_get_role_detail_raises_not_found_for_unknown_id():
+    db = TestSessionLocal()
+    try:
+        service = RoleService(db)
+
+        with pytest.raises(RoleNotFoundError):
+            service.get_role_detail(uuid.uuid4())
     finally:
         db.close()

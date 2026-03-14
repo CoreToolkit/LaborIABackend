@@ -1,3 +1,6 @@
+from uuid import UUID
+
+from exceptions.role_exceptions import RoleNotFoundError
 from sqlalchemy.orm import Session
 
 from models.job_role import JobRoleCategory, RoleEnglishLevel, SeniorityLevel
@@ -34,3 +37,9 @@ class RoleService:
             "size": size,
             "total": total,
         }
+
+    def get_role_detail(self, role_id: UUID):
+        role = self.repo.get_role_by_id(role_id)
+        if not role:
+            raise RoleNotFoundError()
+        return role

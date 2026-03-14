@@ -1,10 +1,13 @@
-from fastapi import APIRouter, Depends, Query, Response, status
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
 from core.database import get_db
 from core.jwt import get_current_user
+from exceptions.role_exceptions import RoleNotFoundError
 from models.job_role import JobRoleCategory, RoleEnglishLevel, SeniorityLevel
-from schemas.role import RoleResponseSchema
+from schemas.role import RoleDetailSchema, RoleResponseSchema
 from services.role_service import RoleService
 
 
@@ -48,3 +51,21 @@ def list_roles(
         "size": result["size"],
         "total": result["total"],
     }
+
+
+@router.get("/{role_id}")
+def get_role_detail(
+    role_id: UUID,
+    response: Response,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    service = RoleService(db)
+
+    try:
+        role = service.get_role_detail(role_id)
+    except RoleNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=exc.message) from exc
+
+    response.status_code = status.HTTP_200_OK
+    return RoleDetailSchema.model_validate(role).model_dump(mode="json")

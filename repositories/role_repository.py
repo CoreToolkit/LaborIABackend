@@ -1,7 +1,8 @@
 from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from models.job_role import JobRole, JobRoleCategory, RoleEnglishLevel, SeniorityLevel
+from models.role_skill import RoleSkill
 
 
 class RoleRepository:
@@ -55,3 +56,13 @@ class RoleRepository:
         offset = (page - 1) * size
         items = query.order_by(JobRole.name.asc()).offset(offset).limit(size).all()
         return items, total
+
+    def get_role_by_id(self, role_id) -> JobRole | None:
+        return (
+            self.db.query(JobRole)
+            .options(
+                selectinload(JobRole.role_skills).selectinload(RoleSkill.technology),
+            )
+            .filter(JobRole.id == role_id)
+            .first()
+        )
