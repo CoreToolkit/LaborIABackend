@@ -8,11 +8,14 @@ from exceptions.profile_exceptions import (
     ProfileAlreadyExistsError,
     ProfileNotFoundError,
     ProfileValidationError,
+    SkillNotFoundError,
 )
 from models.experience import Experience
 from models.profile import EmploymentType, EnglishLevel, Profile
+from models.skill import Skill
 from repositories.profile_repository import ProfileRepository
 from schemas.experience import ExperienceCreate, ExperienceUpdate
+from schemas.skill import SkillCreate, SkillUpdate
 
 
 class ProfileService:
@@ -156,3 +159,35 @@ class ProfileService:
             raise ExperienceNotFoundError()
 
         self.repo.delete_experience(experience)
+
+    def list_skills(self, user_id: int) -> list[Skill]:
+        profile = self._get_required_profile(user_id)
+        return self.repo.list_skills_by_profile_id(profile.id)
+
+    def create_skill(self, user_id: int, skill_data: SkillCreate) -> Skill:
+        profile = self._get_required_profile(user_id)
+        create_data = skill_data.model_dump()
+        create_data["profile_id"] = profile.id
+        return self.repo.create_skill(create_data)
+
+    def update_skill(
+        self,
+        user_id: int,
+        skill_id: int,
+        skill_data: SkillUpdate,
+    ) -> Skill:
+        profile = self._get_required_profile(user_id)
+        skill = self.repo.get_skill_by_id_and_profile_id(skill_id, profile.id)
+        if not skill:
+            raise SkillNotFoundError()
+
+        update_data = skill_data.model_dump(exclude_unset=True)
+        return self.repo.update_skill(skill, update_data)
+
+    def delete_skill(self, user_id: int, skill_id: int) -> None:
+        profile = self._get_required_profile(user_id)
+        skill = self.repo.get_skill_by_id_and_profile_id(skill_id, profile.id)
+        if not skill:
+            raise SkillNotFoundError()
+
+        self.repo.delete_skill(skill)

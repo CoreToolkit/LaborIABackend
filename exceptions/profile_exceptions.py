@@ -24,3 +24,7 @@ class ExperienceNotFoundError(ProfileError):
 
 class ExperienceValidationError(ProfileError):
     default_message = "Invalid experience data"
+
+
+class SkillNotFoundError(ProfileError):
+    default_message = "Skill not found"
