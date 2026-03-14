@@ -5,9 +5,9 @@ from sqlalchemy.orm import Session
 
 from core.database import get_db
 from core.jwt import get_current_user
-from exceptions.role_exceptions import RoleNotFoundError
+from exceptions.role_exceptions import RoleAuthorizationError, RoleNotFoundError, RoleValidationError
 from models.job_role import JobRoleCategory, RoleEnglishLevel, SeniorityLevel
-from schemas.role import RoleDetailSchema, RoleResponseSchema
+from schemas.role import RoleCreateSchema, RoleDetailSchema, RoleResponseSchema
 from services.role_service import RoleService
 
 
@@ -68,4 +68,24 @@ def get_role_detail(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=exc.message) from exc
 
     response.status_code = status.HTTP_200_OK
+    return RoleDetailSchema.model_validate(role).model_dump(mode="json")
+
+
+@router.post("")
+def create_role(
+    role_data: RoleCreateSchema,
+    response: Response,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    service = RoleService(db)
+
+    try:
+        role = service.create_role(role_data, current_user)
+    except RoleAuthorizationError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=exc.message) from exc
+    except RoleValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.message) from exc
+
+    response.status_code = status.HTTP_201_CREATED
     return RoleDetailSchema.model_validate(role).model_dump(mode="json")

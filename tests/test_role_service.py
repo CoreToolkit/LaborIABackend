@@ -10,10 +10,11 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from core.database import Base
-from exceptions.role_exceptions import RoleNotFoundError
+from exceptions.role_exceptions import RoleAuthorizationError, RoleNotFoundError, RoleValidationError
 from models.job_role import JobRole, JobRoleCategory, RoleEnglishLevel, SeniorityLevel
 from models.role_skill import RoleSkill
 from models.technology import Technology
+from schemas.role import RoleCreateSchema
 from services.role_service import RoleService
 
 
@@ -87,6 +88,10 @@ def _create_role_skill(role_id, technology_id: int, importance_weight: int = 8, 
         db.close()
 
 
+def _admin_user() -> dict:
+    return {"email": "admin@example.com"}
+
+
 def test_list_roles_returns_paginated_items():
     _create_role(name="Backend Developer")
     _create_role(name="Data Analyst", category=JobRoleCategory.DATA)
@@ -147,5 +152,92 @@ def test_get_role_detail_raises_not_found_for_unknown_id():
 
         with pytest.raises(RoleNotFoundError):
             service.get_role_detail(uuid.uuid4())
+    finally:
+        db.close()
+
+
+def test_create_role_creates_role_with_requirements_for_admin(monkeypatch):
+    monkeypatch.setenv("ADMIN_EMAILS", "admin@example.com")
+    technology = _create_technology("FastAPI")
+
+    db = TestSessionLocal()
+    try:
+        service = RoleService(db)
+        result = service.create_role(
+            RoleCreateSchema.model_validate(
+                {
+                    "name": "Backend Developer",
+                    "description": "Builds APIs",
+                    "category": "tech",
+                    "seniority_level": "mid",
+                    "min_english_level": "B2",
+                    "role_skills": [
+                        {
+                            "technology_id": technology.id,
+                            "importance_weight": 9,
+                            "is_required": True,
+                        }
+                    ],
+                }
+            ),
+            _admin_user(),
+        )
+
+        assert result.name == "Backend Developer"
+        assert len(result.role_skills) == 1
+        assert result.role_skills[0].technology.name == "FastAPI"
+    finally:
+        db.close()
+
+
+def test_create_role_raises_for_non_admin(monkeypatch):
+    monkeypatch.setenv("ADMIN_EMAILS", "admin@example.com")
+
+    db = TestSessionLocal()
+    try:
+        service = RoleService(db)
+
+        with pytest.raises(RoleAuthorizationError):
+            service.create_role(
+                RoleCreateSchema.model_validate(
+                    {
+                        "name": "Backend Developer",
+                        "category": "tech",
+                        "seniority_level": "mid",
+                        "min_english_level": "B2",
+                    }
+                ),
+                {"email": "user@example.com"},
+            )
+    finally:
+        db.close()
+
+
+def test_create_role_raises_when_technology_does_not_exist(monkeypatch):
+    monkeypatch.setenv("ADMIN_EMAILS", "admin@example.com")
+
+    db = TestSessionLocal()
+    try:
+        service = RoleService(db)
+
+        with pytest.raises(RoleValidationError):
+            service.create_role(
+                RoleCreateSchema.model_validate(
+                    {
+                        "name": "Backend Developer",
+                        "category": "tech",
+                        "seniority_level": "mid",
+                        "min_english_level": "B2",
+                        "role_skills": [
+                            {
+                                "technology_id": 999,
+                                "importance_weight": 9,
+                                "is_required": True,
+                            }
+                        ],
+                    }
+                ),
+                _admin_user(),
+            )
     finally:
         db.close()

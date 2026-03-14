@@ -8,3 +8,11 @@ class RoleError(Exception):
 
 class RoleNotFoundError(RoleError):
     default_message = "Role not found"
+
+
+class RoleAuthorizationError(RoleError):
+    default_message = "Admin privileges are required"
+
+
+class RoleValidationError(RoleError):
+    default_message = "Invalid role data"

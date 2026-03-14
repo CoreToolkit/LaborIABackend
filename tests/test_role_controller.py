@@ -61,6 +61,18 @@ def _auth_headers() -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
+def _auth_headers_for_email(email: str) -> dict:
+    token = create_token(
+        {
+            "id": 999,
+            "email": email,
+            "name": "Roles User",
+            "picture": None,
+        }
+    )
+    return {"Authorization": f"Bearer {token}"}
+
+
 def _create_role(
     *,
     name: str,
@@ -182,3 +194,87 @@ def test_get_role_detail_returns_404_when_role_does_not_exist():
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Role not found"
+
+
+def test_create_role_returns_201_for_admin(monkeypatch):
+    monkeypatch.setenv("ADMIN_EMAILS", "admin@example.com")
+    technology = _create_technology("FastAPI")
+    headers = _auth_headers_for_email("admin@example.com")
+
+    response = client.post(
+        "/api/roles",
+        json={
+            "name": "Backend Developer",
+            "description": "Builds APIs",
+            "category": "tech",
+            "seniority_level": "mid",
+            "min_english_level": "B2",
+            "role_skills": [
+                {
+                    "technology_id": technology.id,
+                    "importance_weight": 9,
+                    "is_required": True,
+                }
+            ],
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["name"] == "Backend Developer"
+    assert len(data["role_skills"]) == 1
+    assert data["role_skills"][0]["technology_name"] == "FastAPI"
+
+
+def test_create_role_returns_403_for_non_admin(monkeypatch):
+    monkeypatch.setenv("ADMIN_EMAILS", "admin@example.com")
+    headers = _auth_headers_for_email("user@example.com")
+
+    response = client.post(
+        "/api/roles",
+        json={
+            "name": "Backend Developer",
+            "category": "tech",
+            "seniority_level": "mid",
+            "min_english_level": "B2",
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Admin privileges are required"
+
+
+def test_create_role_returns_422_for_invalid_schema(monkeypatch):
+    monkeypatch.setenv("ADMIN_EMAILS", "admin@example.com")
+    headers = _auth_headers_for_email("admin@example.com")
+
+    response = client.post(
+        "/api/roles",
+        json={
+            "name": "Backend Developer",
+            "category": "tech",
+            "seniority_level": "mid",
+            "min_english_level": "B2",
+            "estimated_salary_min_cop": "6000000",
+            "estimated_salary_max_cop": "5000000",
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 422
+
+
+def test_create_role_requires_authentication():
+    response = client.post(
+        "/api/roles",
+        json={
+            "name": "Backend Developer",
+            "category": "tech",
+            "seniority_level": "mid",
+            "min_english_level": "B2",
+        },
+    )
+
+    assert response.status_code == 401

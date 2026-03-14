@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from models.job_role import JobRole, JobRoleCategory, RoleEnglishLevel, SeniorityLevel
 from models.role_skill import RoleSkill
+from models.technology import Technology
 
 
 class RoleRepository:
@@ -66,3 +67,19 @@ class RoleRepository:
             .filter(JobRole.id == role_id)
             .first()
         )
+
+    def get_technologies_by_ids(self, technology_ids: list[int]) -> list[Technology]:
+        if not technology_ids:
+            return []
+        return self.db.query(Technology).filter(Technology.id.in_(technology_ids)).all()
+
+    def create_role(self, role_data: dict, role_skills_data: list[dict]) -> JobRole:
+        role = JobRole(**role_data)
+        self.db.add(role)
+        self.db.flush()
+
+        for role_skill_data in role_skills_data:
+            self.db.add(RoleSkill(role_id=role.id, **role_skill_data))
+
+        self.db.commit()
+        return self.get_role_by_id(role.id)
