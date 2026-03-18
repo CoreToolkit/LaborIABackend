@@ -21,6 +21,7 @@ from api import auth
 from api import profiles
 from api import roles
 from api import technologies
+from api import ollama
 from middleware.auth_middleware import AuthMiddleware
 # Carga variables desde .env
 
@@ -60,6 +61,8 @@ app.add_middleware(
         "/docs",
         "/openapi.json",
         "/health",
+        "/api/ai/ollama/health",
+        "/api/ai/ollama/ask",
     ],
 )
 
@@ -68,5 +71,6 @@ app.include_router(profiles.router)
 app.include_router(profiles.router, prefix="/api")
 app.include_router(roles.router, prefix="/api")
 app.include_router(technologies.router, prefix="/api")
+app.include_router(ollama.router, prefix="/api")
 
 
