@@ -20,6 +20,7 @@ except ImportError:  # pragma: no cover - fallback for test env without starlett
 from api import auth
 from api import profiles
 from api import roles
+from api import technologies
 from middleware.auth_middleware import AuthMiddleware
 # Carga variables desde .env
 
@@ -66,5 +67,6 @@ app.include_router(auth.router)
 app.include_router(profiles.router)
 app.include_router(profiles.router, prefix="/api")
 app.include_router(roles.router, prefix="/api")
+app.include_router(technologies.router, prefix="/api")
 
 
