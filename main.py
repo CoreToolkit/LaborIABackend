@@ -22,6 +22,7 @@ from api import profiles
 from api import roles
 from api import technologies
 from api import ollama
+from api import azure_openai
 from middleware.auth_middleware import AuthMiddleware
 # Carga variables desde .env
 
@@ -63,6 +64,8 @@ app.add_middleware(
         "/health",
         "/api/ai/ollama/health",
         "/api/ai/ollama/ask",
+        "/api/ai/azure-openai/health",
+        "/api/ai/azure-openai/ask",
     ],
 )
 
@@ -72,5 +75,6 @@ app.include_router(profiles.router, prefix="/api")
 app.include_router(roles.router, prefix="/api")
 app.include_router(technologies.router, prefix="/api")
 app.include_router(ollama.router, prefix="/api")
+app.include_router(azure_openai.router, prefix="/api")
 
 
