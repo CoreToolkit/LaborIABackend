@@ -1,5 +1,6 @@
 import uuid
 from decimal import Decimal
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -103,6 +104,30 @@ def _create_role_skill(db, role_id, technology_id: int, importance_weight: int) 
     db.commit()
     db.refresh(role_skill)
     return role_skill
+
+
+def _create_experience(
+    db,
+    profile_id: int,
+    *,
+    start_date: date,
+    end_date: date | None = None,
+    currently_working: bool = False,
+):
+    from models.experience import Experience
+
+    experience = Experience(
+        profile_id=profile_id,
+        position="Backend Developer",
+        company="LaborIA",
+        start_date=start_date,
+        end_date=end_date,
+        currently_working=currently_working,
+    )
+    db.add(experience)
+    db.commit()
+    db.refresh(experience)
+    return experience
 
 
 def test_calculate_skill_match_returns_zero_when_user_has_no_profile():
@@ -458,5 +483,171 @@ def test_detect_skill_gaps_deduplicates_role_requirements_by_normalized_name():
             {"name": "react", "importance_weight": 9, "is_required": False},
             {"name": "Docker", "importance_weight": 4, "is_required": False},
         ]
+    finally:
+        db.close()
+
+
+def test_calculate_experience_match_returns_zero_when_user_has_no_profile():
+    db = TestSessionLocal()
+    try:
+        user = _create_user(db)
+        role = _create_role(db)
+        service = MatchingService(db)
+
+        assert service.calculate_experience_match(user.id, role.id) == 0.0
+    finally:
+        db.close()
+
+
+def test_calculate_experience_match_returns_zero_when_user_has_no_experiences():
+    db = TestSessionLocal()
+    try:
+        user = _create_user(db)
+        _create_profile(db, user.id)
+        role = _create_role(db)
+        service = MatchingService(db)
+
+        assert service.calculate_experience_match(user.id, role.id) == 0.0
+    finally:
+        db.close()
+
+
+def test_calculate_experience_match_returns_one_hundred_when_user_meets_exact_minimum():
+    db = TestSessionLocal()
+    try:
+        user = _create_user(db)
+        profile = _create_profile(db, user.id)
+        role = _create_role(db)
+        role.seniority_level = SeniorityLevel.MID
+        db.commit()
+
+        _create_experience(
+            db,
+            profile.id,
+            start_date=date(2022, 1, 1),
+            end_date=date(2024, 1, 1),
+        )
+
+        service = MatchingService(db)
+
+        assert service.calculate_experience_match(user.id, role.id) == 100.0
+    finally:
+        db.close()
+
+
+def test_calculate_experience_match_returns_one_hundred_when_user_exceeds_minimum():
+    db = TestSessionLocal()
+    try:
+        user = _create_user(db)
+        profile = _create_profile(db, user.id)
+        role = _create_role(db)
+        role.seniority_level = SeniorityLevel.MID
+        db.commit()
+
+        _create_experience(
+            db,
+            profile.id,
+            start_date=date(2020, 1, 1),
+            end_date=date(2024, 1, 1),
+        )
+
+        service = MatchingService(db)
+
+        assert service.calculate_experience_match(user.id, role.id) == 100.0
+    finally:
+        db.close()
+
+
+def test_calculate_experience_match_returns_proportional_score_when_user_does_not_meet_minimum():
+    db = TestSessionLocal()
+    try:
+        user = _create_user(db)
+        profile = _create_profile(db, user.id)
+        role = _create_role(db)
+        role.seniority_level = SeniorityLevel.SENIOR
+        db.commit()
+
+        _create_experience(
+            db,
+            profile.id,
+            start_date=date(2022, 1, 1),
+            end_date=date(2024, 1, 1),
+        )
+
+        service = MatchingService(db)
+
+        assert service.calculate_experience_match(user.id, role.id) == 50.0
+    finally:
+        db.close()
+
+
+def test_calculate_experience_match_is_clamped_between_zero_and_one_hundred():
+    db = TestSessionLocal()
+    try:
+        user = _create_user(db)
+        profile = _create_profile(db, user.id)
+        role = _create_role(db)
+        role.seniority_level = SeniorityLevel.JUNIOR
+        db.commit()
+
+        _create_experience(
+            db,
+            profile.id,
+            start_date=date(2015, 1, 1),
+            end_date=date(2025, 1, 1),
+        )
+
+        service = MatchingService(db)
+        result = service.calculate_experience_match(user.id, role.id)
+
+        assert 0.0 <= result <= 100.0
+        assert result == 100.0
+    finally:
+        db.close()
+
+
+def test_calculate_experience_match_treats_missing_end_date_without_current_flag_conservatively():
+    db = TestSessionLocal()
+    try:
+        user = _create_user(db)
+        profile = _create_profile(db, user.id)
+        role = _create_role(db)
+        role.seniority_level = SeniorityLevel.JUNIOR
+        db.commit()
+
+        _create_experience(
+            db,
+            profile.id,
+            start_date=date(2024, 1, 1),
+            end_date=None,
+            currently_working=False,
+        )
+
+        service = MatchingService(db)
+
+        assert service.calculate_experience_match(user.id, role.id) == 0.0
+    finally:
+        db.close()
+
+
+def test_calculate_experience_match_handles_zero_length_experience_as_zero():
+    db = TestSessionLocal()
+    try:
+        user = _create_user(db)
+        profile = _create_profile(db, user.id)
+        role = _create_role(db)
+        role.seniority_level = SeniorityLevel.JUNIOR
+        db.commit()
+
+        _create_experience(
+            db,
+            profile.id,
+            start_date=date(2024, 1, 1),
+            end_date=date(2024, 1, 1),
+        )
+
+        service = MatchingService(db)
+
+        assert service.calculate_experience_match(user.id, role.id) == 0.0
     finally:
         db.close()

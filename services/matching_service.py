@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from models.job_role import SeniorityLevel
 from exceptions.role_exceptions import RoleNotFoundError
 from repositories.profile_repository import ProfileRepository
 from repositories.role_repository import RoleRepository
@@ -30,8 +32,11 @@ class MatchingService:
             raise RoleNotFoundError()
         return role
 
+    def _get_profile(self, user_id: int):
+        return self.profile_repo.get_by_user_id(user_id)
+
     def _get_normalized_user_skills(self, user_id: int) -> set[str]:
-        profile = self.profile_repo.get_by_user_id(user_id)
+        profile = self._get_profile(user_id)
         if not profile:
             return set()
 
@@ -45,6 +50,56 @@ class MatchingService:
             if normalized_skill:
                 normalized_user_skills.add(normalized_skill)
         return normalized_user_skills
+
+    def _get_user_experiences(self, user_id: int):
+        profile = self._get_profile(user_id)
+        if not profile:
+            return []
+        return self.profile_repo.list_experiences_by_profile_id(profile.id)
+
+    @staticmethod
+    def _get_required_experience_months(role) -> int:
+        minimum_by_seniority = {
+            SeniorityLevel.JUNIOR: 12,
+            SeniorityLevel.MID: 24,
+            SeniorityLevel.SENIOR: 48,
+        }
+        return minimum_by_seniority.get(role.seniority_level, 24)
+
+    @staticmethod
+    def _calculate_experience_months(start_date: date, end_date: date) -> int:
+        if end_date <= start_date:
+            return 0
+
+        months = (end_date.year - start_date.year) * 12 + (end_date.month - start_date.month)
+        if end_date.day < start_date.day:
+            months -= 1
+
+        return max(months, 0)
+
+    @classmethod
+    def _get_total_experience_months(cls, experiences, reference_date: date | None = None) -> int:
+        if not experiences:
+            return 0
+
+        reference_date = reference_date or date.today()
+        total_months = 0
+
+        for experience in experiences:
+            start_date = experience.start_date
+            if not start_date:
+                continue
+
+            if experience.currently_working:
+                effective_end_date = reference_date
+            elif experience.end_date is not None:
+                effective_end_date = experience.end_date
+            else:
+                effective_end_date = start_date
+
+            total_months += cls._calculate_experience_months(start_date, effective_end_date)
+
+        return total_months
 
     @staticmethod
     def _get_unique_role_requirements(role) -> list[_RoleRequirement]:
@@ -126,3 +181,24 @@ class MatchingService:
             )
 
         return gaps
+
+    def calculate_experience_match(self, user_id: int, role_id: UUID) -> float:
+        profile = self._get_profile(user_id)
+        if not profile:
+            return 0.0
+
+        experiences = self._get_user_experiences(user_id)
+        if not experiences:
+            return 0.0
+
+        role = self._get_role_or_raise(role_id)
+        required_months = self._get_required_experience_months(role)
+        if required_months <= 0:
+            return 100.0
+
+        user_months = self._get_total_experience_months(experiences)
+        if user_months <= 0:
+            return 0.0
+
+        percentage = (user_months / required_months) * 100
+        return round(min(max(percentage, 0.0), 100.0), 2)
