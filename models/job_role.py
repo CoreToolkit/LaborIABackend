@@ -100,3 +100,4 @@ class JobRole(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
 
     role_skills = relationship("RoleSkill", back_populates="job_role", cascade="all, delete-orphan")
+    match_results = relationship("MatchResult", back_populates="job_role")
