@@ -57,6 +57,13 @@ _EDUCATION_DOMAIN_AFFINITY = {
     "design": {"design": 100.0, "tech": 0.0, "data": 0.0},
 }
 
+_MATCH_SCORE_WEIGHTS = {
+    "skill_match": 0.50,
+    "experience_match": 0.25,
+    "education_match": 0.15,
+    "preferences_match": 0.10,
+}
+
 
 @dataclass(frozen=True)
 class _RoleRequirement:
@@ -255,6 +262,14 @@ class MatchingService:
         percentage = float((guaranteed_salary / salary_expectation) * Decimal("100"))
         return round(min(max(percentage, 0.0), 100.0), 2)
 
+    @staticmethod
+    def _calculate_weighted_match_score(breakdown: dict[str, float]) -> float:
+        total_score = 0.0
+        for score_name, weight in _MATCH_SCORE_WEIGHTS.items():
+            total_score += breakdown[score_name] * weight
+
+        return round(min(max(total_score, 0.0), 100.0), 2)
+
     def calculate_skill_match(self, user_id: int, role_id: UUID) -> float:
         normalized_user_skills = self._get_normalized_user_skills(user_id)
         if not normalized_user_skills:
@@ -367,3 +382,20 @@ class MatchingService:
 
         percentage = sum(available_scores) / len(available_scores)
         return round(min(max(percentage, 0.0), 100.0), 2)
+
+    def calculate_match_score(self, user_id: int, role_id: UUID) -> dict[str, object]:
+        self._get_role_or_raise(role_id)
+
+        breakdown = {
+            "skill_match": self.calculate_skill_match(user_id, role_id),
+            "experience_match": self.calculate_experience_match(user_id, role_id),
+            "education_match": self.calculate_education_match(user_id, role_id),
+            "preferences_match": self.calculate_preferences_match(user_id, role_id),
+        }
+        total_score = self._calculate_weighted_match_score(breakdown)
+
+        return {
+            "total_score": total_score,
+            "breakdown": breakdown,
+            "skill_gaps": self.detect_skill_gaps(user_id, role_id),
+        }

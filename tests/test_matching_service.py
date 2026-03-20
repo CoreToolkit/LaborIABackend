@@ -877,3 +877,96 @@ def test_calculate_preferences_match_is_clamped_between_zero_and_one_hundred():
         assert result == 100.0
     finally:
         db.close()
+
+
+def test_calculate_match_score_returns_weighted_total_with_breakdown_and_skill_gaps():
+    db = TestSessionLocal()
+    try:
+        user = _create_user(db)
+        profile = _create_profile(
+            db,
+            user.id,
+            career="Ingenieria de Sistemas",
+            preferred_location="Bogota",
+            salary_expectation=Decimal("4000000"),
+        )
+        _create_skill(db, profile.id, "Python")
+        _create_experience(
+            db,
+            profile.id,
+            start_date=date(2022, 1, 1),
+            end_date=date(2024, 1, 1),
+        )
+
+        role = _create_role(db, location="Bogota")
+        role.category = JobRoleCategory.DATA
+        role.seniority_level = SeniorityLevel.SENIOR
+        db.commit()
+
+        python = _create_technology(db, "Python")
+        fastapi = _create_technology(db, "FastAPI")
+        docker = _create_technology(db, "Docker")
+        _create_role_skill(db, role.id, python.id, 5)
+        _create_role_skill(db, role.id, fastapi.id, 3)
+        _create_role_skill(db, role.id, docker.id, 2)
+
+        service = MatchingService(db)
+        result = service.calculate_match_score(user.id, role.id)
+
+        assert result == {
+            "total_score": 56.5,
+            "breakdown": {
+                "skill_match": 50.0,
+                "experience_match": 50.0,
+                "education_match": 60.0,
+                "preferences_match": 100.0,
+            },
+            "skill_gaps": [
+                {"name": "FastAPI", "importance_weight": 3, "is_required": False},
+                {"name": "Docker", "importance_weight": 2, "is_required": False},
+            ],
+        }
+    finally:
+        db.close()
+
+
+def test_calculate_match_score_returns_zero_scores_when_user_has_no_profile():
+    db = TestSessionLocal()
+    try:
+        user = _create_user(db)
+        role = _create_role(db)
+        python = _create_technology(db, "Python")
+        fastapi = _create_technology(db, "FastAPI")
+        _create_role_skill(db, role.id, python.id, 8)
+        _create_role_skill(db, role.id, fastapi.id, 4)
+
+        service = MatchingService(db)
+        result = service.calculate_match_score(user.id, role.id)
+
+        assert result == {
+            "total_score": 0.0,
+            "breakdown": {
+                "skill_match": 0.0,
+                "experience_match": 0.0,
+                "education_match": 0.0,
+                "preferences_match": 0.0,
+            },
+            "skill_gaps": [
+                {"name": "Python", "importance_weight": 8, "is_required": False},
+                {"name": "FastAPI", "importance_weight": 4, "is_required": False},
+            ],
+        }
+    finally:
+        db.close()
+
+
+def test_calculate_match_score_raises_when_role_does_not_exist():
+    db = TestSessionLocal()
+    try:
+        user = _create_user(db)
+        service = MatchingService(db)
+
+        with pytest.raises(RoleNotFoundError):
+            service.calculate_match_score(user.id, uuid.uuid4())
+    finally:
+        db.close()
