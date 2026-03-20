@@ -274,3 +274,189 @@ def test_calculate_skill_match_raises_when_role_does_not_exist():
             service.calculate_skill_match(user.id, uuid.uuid4())
     finally:
         db.close()
+
+
+def test_detect_skill_gaps_returns_empty_list_when_role_has_no_role_skills():
+    db = TestSessionLocal()
+    try:
+        user = _create_user(db)
+        profile = _create_profile(db, user.id)
+        _create_skill(db, profile.id, "Python")
+        role = _create_role(db)
+        service = MatchingService(db)
+
+        assert service.detect_skill_gaps(user.id, role.id) == []
+    finally:
+        db.close()
+
+
+def test_detect_skill_gaps_returns_all_role_skills_when_user_has_no_profile():
+    db = TestSessionLocal()
+    try:
+        user = _create_user(db)
+        role = _create_role(db)
+        fastapi = _create_technology(db, "FastAPI")
+        docker = _create_technology(db, "Docker")
+        _create_role_skill(db, role.id, fastapi.id, 9)
+        _create_role_skill(db, role.id, docker.id, 4)
+        service = MatchingService(db)
+
+        assert service.detect_skill_gaps(user.id, role.id) == [
+            {"name": "FastAPI", "importance_weight": 9, "is_required": False},
+            {"name": "Docker", "importance_weight": 4, "is_required": False},
+        ]
+    finally:
+        db.close()
+
+
+def test_detect_skill_gaps_returns_all_role_skills_when_user_has_no_skills():
+    db = TestSessionLocal()
+    try:
+        user = _create_user(db)
+        _create_profile(db, user.id)
+        role = _create_role(db)
+        fastapi = _create_technology(db, "FastAPI")
+        docker = _create_technology(db, "Docker")
+        _create_role_skill(db, role.id, fastapi.id, 9)
+        _create_role_skill(db, role.id, docker.id, 4)
+        service = MatchingService(db)
+
+        assert service.detect_skill_gaps(user.id, role.id) == [
+            {"name": "FastAPI", "importance_weight": 9, "is_required": False},
+            {"name": "Docker", "importance_weight": 4, "is_required": False},
+        ]
+    finally:
+        db.close()
+
+
+def test_detect_skill_gaps_returns_only_missing_skills_for_partial_match():
+    db = TestSessionLocal()
+    try:
+        user = _create_user(db)
+        profile = _create_profile(db, user.id)
+        _create_skill(db, profile.id, "Python")
+
+        role = _create_role(db)
+        python = _create_technology(db, "Python")
+        docker = _create_technology(db, "Docker")
+        fastapi = _create_technology(db, "FastAPI")
+        _create_role_skill(db, role.id, python.id, 10)
+        _create_role_skill(db, role.id, docker.id, 8)
+        _create_role_skill(db, role.id, fastapi.id, 6)
+        service = MatchingService(db)
+
+        assert service.detect_skill_gaps(user.id, role.id) == [
+            {"name": "Docker", "importance_weight": 8, "is_required": False},
+            {"name": "FastAPI", "importance_weight": 6, "is_required": False},
+        ]
+    finally:
+        db.close()
+
+
+def test_detect_skill_gaps_orders_by_importance_weight_desc():
+    db = TestSessionLocal()
+    try:
+        user = _create_user(db)
+        _create_profile(db, user.id)
+
+        role = _create_role(db)
+        docker = _create_technology(db, "Docker")
+        python = _create_technology(db, "Python")
+        fastapi = _create_technology(db, "FastAPI")
+        _create_role_skill(db, role.id, docker.id, 3)
+        _create_role_skill(db, role.id, python.id, 9)
+        _create_role_skill(db, role.id, fastapi.id, 6)
+        service = MatchingService(db)
+
+        gaps = service.detect_skill_gaps(user.id, role.id)
+
+        assert [gap["name"] for gap in gaps] == ["Python", "FastAPI", "Docker"]
+    finally:
+        db.close()
+
+
+def test_detect_skill_gaps_is_case_insensitive():
+    db = TestSessionLocal()
+    try:
+        user = _create_user(db)
+        profile = _create_profile(db, user.id)
+        _create_skill(db, profile.id, "python")
+
+        role = _create_role(db)
+        python = _create_technology(db, "Python")
+        docker = _create_technology(db, "Docker")
+        _create_role_skill(db, role.id, python.id, 9)
+        _create_role_skill(db, role.id, docker.id, 4)
+        service = MatchingService(db)
+
+        assert service.detect_skill_gaps(user.id, role.id) == [
+            {"name": "Docker", "importance_weight": 4, "is_required": False},
+        ]
+    finally:
+        db.close()
+
+
+def test_detect_skill_gaps_applies_trim_and_space_normalization():
+    db = TestSessionLocal()
+    try:
+        user = _create_user(db)
+        profile = _create_profile(db, user.id)
+        _create_skill(db, profile.id, "  Machine   Learning ")
+
+        role = _create_role(db)
+        machine_learning = _create_technology(db, "Machine Learning")
+        docker = _create_technology(db, "Docker")
+        _create_role_skill(db, role.id, machine_learning.id, 10)
+        _create_role_skill(db, role.id, docker.id, 4)
+        service = MatchingService(db)
+
+        assert service.detect_skill_gaps(user.id, role.id) == [
+            {"name": "Docker", "importance_weight": 4, "is_required": False},
+        ]
+    finally:
+        db.close()
+
+
+def test_detect_skill_gaps_ignores_duplicate_user_skills():
+    db = TestSessionLocal()
+    try:
+        user = _create_user(db)
+        profile = _create_profile(db, user.id)
+        _create_skill(db, profile.id, "Python")
+        _create_skill(db, profile.id, " python ")
+
+        role = _create_role(db)
+        python = _create_technology(db, "Python")
+        fastapi = _create_technology(db, "FastAPI")
+        _create_role_skill(db, role.id, python.id, 8)
+        _create_role_skill(db, role.id, fastapi.id, 5)
+        service = MatchingService(db)
+
+        assert service.detect_skill_gaps(user.id, role.id) == [
+            {"name": "FastAPI", "importance_weight": 5, "is_required": False},
+        ]
+    finally:
+        db.close()
+
+
+def test_detect_skill_gaps_deduplicates_role_requirements_by_normalized_name():
+    db = TestSessionLocal()
+    try:
+        user = _create_user(db)
+        _create_profile(db, user.id)
+
+        role = _create_role(db)
+        react = _create_technology(db, "React")
+        react_trimmed = _create_technology(db, " react ")
+        docker = _create_technology(db, "Docker")
+        _create_role_skill(db, role.id, react.id, 7)
+        _create_role_skill(db, role.id, react_trimmed.id, 9)
+        _create_role_skill(db, role.id, docker.id, 4)
+        service = MatchingService(db)
+
+        assert service.detect_skill_gaps(user.id, role.id) == [
+            {"name": "react", "importance_weight": 9, "is_required": False},
+            {"name": "Docker", "importance_weight": 4, "is_required": False},
+        ]
+    finally:
+        db.close()
