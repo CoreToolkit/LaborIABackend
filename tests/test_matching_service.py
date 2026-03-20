@@ -46,8 +46,20 @@ def _create_user(db, email: str = "matching@example.com") -> User:
     return user
 
 
-def _create_profile(db, user_id: int, career: str | None = None) -> Profile:
-    profile = Profile(user_id=user_id, full_name="Matching Profile", career=career)
+def _create_profile(
+    db,
+    user_id: int,
+    career: str | None = None,
+    preferred_location: str | None = None,
+    salary_expectation: Decimal | None = None,
+) -> Profile:
+    profile = Profile(
+        user_id=user_id,
+        full_name="Matching Profile",
+        career=career,
+        preferred_location=preferred_location,
+        salary_expectation=salary_expectation,
+    )
     db.add(profile)
     db.commit()
     db.refresh(profile)
@@ -67,6 +79,9 @@ def _create_role(
     *,
     name: str = "Backend Developer",
     role_id=None,
+    salary_min: Decimal | None = Decimal("3000000"),
+    salary_max: Decimal | None = Decimal("5000000"),
+    location: str | None = None,
 ) -> JobRole:
     role = JobRole(
         id=role_id or uuid.uuid4(),
@@ -75,13 +90,15 @@ def _create_role(
         category=JobRoleCategory.TECH,
         seniority_level=SeniorityLevel.MID,
         min_english_level=RoleEnglishLevel.B2,
-        estimated_salary_min_cop=Decimal("3000000"),
-        estimated_salary_max_cop=Decimal("5000000"),
+        estimated_salary_min_cop=salary_min,
+        estimated_salary_max_cop=salary_max,
         active=True,
     )
     db.add(role)
     db.commit()
     db.refresh(role)
+    if location is not None:
+        role.location = location
     return role
 
 
@@ -737,6 +754,124 @@ def test_calculate_education_match_is_clamped_between_zero_and_one_hundred():
 
         service = MatchingService(db)
         result = service.calculate_education_match(user.id, role.id)
+
+        assert 0.0 <= result <= 100.0
+        assert result == 100.0
+    finally:
+        db.close()
+
+
+def test_calculate_preferences_match_returns_zero_when_user_has_no_profile():
+    db = TestSessionLocal()
+    try:
+        user = _create_user(db)
+        role = _create_role(db, location="Bogota")
+        service = MatchingService(db)
+
+        assert service.calculate_preferences_match(user.id, role.id) == 0.0
+    finally:
+        db.close()
+
+
+def test_calculate_preferences_match_returns_zero_when_user_has_no_preferences():
+    db = TestSessionLocal()
+    try:
+        user = _create_user(db)
+        _create_profile(db, user.id)
+        role = _create_role(db)
+        service = MatchingService(db)
+
+        assert service.calculate_preferences_match(user.id, role.id) == 0.0
+    finally:
+        db.close()
+
+
+def test_calculate_preferences_match_uses_only_available_components_when_role_lacks_location():
+    db = TestSessionLocal()
+    try:
+        user = _create_user(db)
+        _create_profile(db, user.id, preferred_location="Bogota", salary_expectation=Decimal("4000000"))
+        role = _create_role(db, location=None)
+        service = MatchingService(db)
+
+        assert service.calculate_preferences_match(user.id, role.id) == 100.0
+    finally:
+        db.close()
+
+
+def test_calculate_preferences_match_returns_zero_when_role_has_no_salary_or_location():
+    db = TestSessionLocal()
+    try:
+        user = _create_user(db)
+        _create_profile(db, user.id, preferred_location="Bogota", salary_expectation=Decimal("4000000"))
+        role = _create_role(db, salary_min=None, salary_max=None, location=None)
+        service = MatchingService(db)
+
+        assert service.calculate_preferences_match(user.id, role.id) == 0.0
+    finally:
+        db.close()
+
+
+def test_calculate_preferences_match_returns_one_hundred_for_matching_location():
+    db = TestSessionLocal()
+    try:
+        user = _create_user(db)
+        _create_profile(db, user.id, preferred_location="Bogota")
+        role = _create_role(db, salary_min=None, salary_max=None, location="  bogota ")
+        service = MatchingService(db)
+
+        assert service.calculate_preferences_match(user.id, role.id) == 100.0
+    finally:
+        db.close()
+
+
+def test_calculate_preferences_match_returns_zero_for_non_matching_location():
+    db = TestSessionLocal()
+    try:
+        user = _create_user(db)
+        _create_profile(db, user.id, preferred_location="Bogota")
+        role = _create_role(db, salary_min=None, salary_max=None, location="Medellin")
+        service = MatchingService(db)
+
+        assert service.calculate_preferences_match(user.id, role.id) == 0.0
+    finally:
+        db.close()
+
+
+def test_calculate_preferences_match_returns_one_hundred_for_salary_within_range():
+    db = TestSessionLocal()
+    try:
+        user = _create_user(db)
+        _create_profile(db, user.id, salary_expectation=Decimal("4000000"))
+        role = _create_role(db, salary_min=Decimal("3000000"), salary_max=Decimal("5000000"))
+        service = MatchingService(db)
+
+        assert service.calculate_preferences_match(user.id, role.id) == 100.0
+    finally:
+        db.close()
+
+
+def test_calculate_preferences_match_returns_proportional_score_for_salary_above_range():
+    db = TestSessionLocal()
+    try:
+        user = _create_user(db)
+        _create_profile(db, user.id, salary_expectation=Decimal("6000000"))
+        role = _create_role(db, salary_min=Decimal("3000000"), salary_max=Decimal("5000000"))
+        service = MatchingService(db)
+
+        assert service.calculate_preferences_match(user.id, role.id) == 83.33
+    finally:
+        db.close()
+
+
+def test_calculate_preferences_match_is_clamped_between_zero_and_one_hundred():
+    db = TestSessionLocal()
+    try:
+        user = _create_user(db)
+        _create_profile(db, user.id, preferred_location="Bogota", salary_expectation=Decimal("1000000"))
+        role = _create_role(db, salary_min=Decimal("3000000"), salary_max=Decimal("5000000"), location="Bogota")
+        service = MatchingService(db)
+        result = service.calculate_preferences_match(user.id, role.id)
 
         assert 0.0 <= result <= 100.0
         assert result == 100.0

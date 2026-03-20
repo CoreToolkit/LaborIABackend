@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -78,6 +79,16 @@ class MatchingService:
 
     def _get_profile(self, user_id: int):
         return self.profile_repo.get_by_user_id(user_id)
+
+    @staticmethod
+    def _normalize_decimal(value) -> Decimal | None:
+        if value is None:
+            return None
+
+        if isinstance(value, Decimal):
+            return value
+
+        return Decimal(str(value))
 
     @staticmethod
     def _detect_education_domains(value: str | None) -> set[str]:
@@ -202,6 +213,48 @@ class MatchingService:
 
         return unique_requirements
 
+    @staticmethod
+    def _get_role_location(role) -> str | None:
+        for attribute_name in ("location", "preferred_location", "job_location", "work_location"):
+            location = getattr(role, attribute_name, None)
+            if location:
+                return str(location)
+        return None
+
+    @classmethod
+    def _calculate_location_preference_score(cls, profile, role) -> float | None:
+        profile_location = normalize_skill_name(getattr(profile, "preferred_location", None))
+        role_location = normalize_skill_name(cls._get_role_location(role))
+        if not profile_location or not role_location:
+            return None
+
+        if profile_location == role_location:
+            return 100.0
+
+        return 0.0
+
+    @classmethod
+    def _calculate_salary_preference_score(cls, profile, role) -> float | None:
+        salary_expectation = cls._normalize_decimal(getattr(profile, "salary_expectation", None))
+        salary_min = cls._normalize_decimal(getattr(role, "estimated_salary_min_cop", None))
+        salary_max = cls._normalize_decimal(getattr(role, "estimated_salary_max_cop", None))
+
+        if salary_expectation is None or (salary_min is None and salary_max is None):
+            return None
+
+        guaranteed_salary = salary_max or salary_min
+        if guaranteed_salary is None or guaranteed_salary <= 0:
+            return None
+
+        if salary_min is not None and salary_expectation < salary_min:
+            return 100.0
+
+        if salary_max is not None and salary_expectation <= salary_max:
+            return 100.0
+
+        percentage = float((guaranteed_salary / salary_expectation) * Decimal("100"))
+        return round(min(max(percentage, 0.0), 100.0), 2)
+
     def calculate_skill_match(self, user_id: int, role_id: UUID) -> float:
         normalized_user_skills = self._get_normalized_user_skills(user_id)
         if not normalized_user_skills:
@@ -296,3 +349,21 @@ class MatchingService:
                 best_score = max(best_score, affinity.get(role_domain, 0.0))
 
         return round(min(max(best_score, 0.0), 100.0), 2)
+
+    def calculate_preferences_match(self, user_id: int, role_id: UUID) -> float:
+        profile = self._get_profile(user_id)
+        if not profile:
+            return 0.0
+
+        role = self._get_role_or_raise(role_id)
+
+        component_scores = [
+            self._calculate_location_preference_score(profile, role),
+            self._calculate_salary_preference_score(profile, role),
+        ]
+        available_scores = [score for score in component_scores if score is not None]
+        if not available_scores:
+            return 0.0
+
+        percentage = sum(available_scores) / len(available_scores)
+        return round(min(max(percentage, 0.0), 100.0), 2)
