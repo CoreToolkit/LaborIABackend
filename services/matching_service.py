@@ -13,6 +13,50 @@ from repositories.role_repository import RoleRepository
 from utils.string_normalization import normalize_skill_name
 
 
+_EDUCATION_DOMAIN_KEYWORDS = {
+    "tech": {
+        "ingenieria de sistemas",
+        "ingenieria de software",
+        "software",
+        "sistemas",
+        "informatica",
+        "computacion",
+        "computer science",
+        "desarrollo de software",
+        "programacion",
+    },
+    "data": {
+        "ciencia de datos",
+        "data science",
+        "datos",
+        "estadistica",
+        "statistics",
+        "matematicas",
+        "mathematics",
+        "analitica",
+        "analytics",
+        "econometria",
+    },
+    "design": {
+        "diseno",
+        "diseño",
+        "ux",
+        "ui",
+        "producto",
+        "multimedia",
+        "grafico",
+        "gráfico",
+        "visual",
+    },
+}
+
+_EDUCATION_DOMAIN_AFFINITY = {
+    "tech": {"tech": 100.0, "data": 60.0, "design": 0.0},
+    "data": {"data": 100.0, "tech": 60.0, "design": 0.0},
+    "design": {"design": 100.0, "tech": 0.0, "data": 0.0},
+}
+
+
 @dataclass(frozen=True)
 class _RoleRequirement:
     name: str
@@ -34,6 +78,29 @@ class MatchingService:
 
     def _get_profile(self, user_id: int):
         return self.profile_repo.get_by_user_id(user_id)
+
+    @staticmethod
+    def _detect_education_domains(value: str | None) -> set[str]:
+        normalized_value = normalize_skill_name(value)
+        if not normalized_value:
+            return set()
+
+        domains: set[str] = set()
+        for domain, keywords in _EDUCATION_DOMAIN_KEYWORDS.items():
+            if any(keyword in normalized_value for keyword in keywords):
+                domains.add(domain)
+
+        return domains
+
+    @classmethod
+    def _get_role_education_domains(cls, role) -> set[str]:
+        domains: set[str] = set()
+        if role.category is not None:
+            domains.add(role.category.value)
+
+        role_name_domains = cls._detect_education_domains(role.name)
+        domains.update(role_name_domains)
+        return domains
 
     def _get_normalized_user_skills(self, user_id: int) -> set[str]:
         profile = self._get_profile(user_id)
@@ -202,3 +269,30 @@ class MatchingService:
 
         percentage = (user_months / required_months) * 100
         return round(min(max(percentage, 0.0), 100.0), 2)
+
+    def calculate_education_match(self, user_id: int, role_id: UUID) -> float:
+        profile = self._get_profile(user_id)
+        if not profile or not profile.career:
+            return 0.0
+
+        role = self._get_role_or_raise(role_id)
+        normalized_career = normalize_skill_name(profile.career)
+        normalized_role_name = normalize_skill_name(role.name)
+        if normalized_career == normalized_role_name:
+            return 100.0
+
+        career_domains = self._detect_education_domains(profile.career)
+        if not career_domains:
+            return 0.0
+
+        role_domains = self._get_role_education_domains(role)
+        if not role_domains:
+            return 0.0
+
+        best_score = 0.0
+        for career_domain in career_domains:
+            affinity = _EDUCATION_DOMAIN_AFFINITY.get(career_domain, {})
+            for role_domain in role_domains:
+                best_score = max(best_score, affinity.get(role_domain, 0.0))
+
+        return round(min(max(best_score, 0.0), 100.0), 2)

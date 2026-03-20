@@ -46,8 +46,8 @@ def _create_user(db, email: str = "matching@example.com") -> User:
     return user
 
 
-def _create_profile(db, user_id: int) -> Profile:
-    profile = Profile(user_id=user_id, full_name="Matching Profile")
+def _create_profile(db, user_id: int, career: str | None = None) -> Profile:
+    profile = Profile(user_id=user_id, full_name="Matching Profile", career=career)
     db.add(profile)
     db.commit()
     db.refresh(profile)
@@ -649,5 +649,96 @@ def test_calculate_experience_match_handles_zero_length_experience_as_zero():
         service = MatchingService(db)
 
         assert service.calculate_experience_match(user.id, role.id) == 0.0
+    finally:
+        db.close()
+
+
+def test_calculate_education_match_returns_zero_when_user_has_no_profile():
+    db = TestSessionLocal()
+    try:
+        user = _create_user(db)
+        role = _create_role(db)
+        service = MatchingService(db)
+
+        assert service.calculate_education_match(user.id, role.id) == 0.0
+    finally:
+        db.close()
+
+
+def test_calculate_education_match_returns_zero_when_user_has_no_career():
+    db = TestSessionLocal()
+    try:
+        user = _create_user(db)
+        _create_profile(db, user.id, career=None)
+        role = _create_role(db)
+        service = MatchingService(db)
+
+        assert service.calculate_education_match(user.id, role.id) == 0.0
+    finally:
+        db.close()
+
+
+def test_calculate_education_match_returns_one_hundred_for_direct_domain_match():
+    db = TestSessionLocal()
+    try:
+        user = _create_user(db)
+        _create_profile(db, user.id, career="Ingenieria de Sistemas")
+        role = _create_role(db)
+        role.category = JobRoleCategory.TECH
+        db.commit()
+
+        service = MatchingService(db)
+
+        assert service.calculate_education_match(user.id, role.id) == 100.0
+    finally:
+        db.close()
+
+
+def test_calculate_education_match_returns_intermediate_score_for_affine_domain():
+    db = TestSessionLocal()
+    try:
+        user = _create_user(db)
+        _create_profile(db, user.id, career="Ingenieria de Sistemas")
+        role = _create_role(db)
+        role.category = JobRoleCategory.DATA
+        db.commit()
+
+        service = MatchingService(db)
+
+        assert service.calculate_education_match(user.id, role.id) == 60.0
+    finally:
+        db.close()
+
+
+def test_calculate_education_match_returns_zero_for_unrelated_education():
+    db = TestSessionLocal()
+    try:
+        user = _create_user(db)
+        _create_profile(db, user.id, career="Diseno Grafico")
+        role = _create_role(db)
+        role.category = JobRoleCategory.DATA
+        db.commit()
+
+        service = MatchingService(db)
+
+        assert service.calculate_education_match(user.id, role.id) == 0.0
+    finally:
+        db.close()
+
+
+def test_calculate_education_match_is_clamped_between_zero_and_one_hundred():
+    db = TestSessionLocal()
+    try:
+        user = _create_user(db)
+        _create_profile(db, user.id, career="Ciencia de Datos")
+        role = _create_role(db)
+        role.category = JobRoleCategory.DATA
+        db.commit()
+
+        service = MatchingService(db)
+        result = service.calculate_education_match(user.id, role.id)
+
+        assert 0.0 <= result <= 100.0
+        assert result == 100.0
     finally:
         db.close()
