@@ -4,7 +4,7 @@ from datetime import date
 from typing import Any, Iterable
 
 
-DEFAULT_QUESTION_OPTIONS = {
+DEFAULT_QUESTION_OPTIONS = { 
 	"temperature": 0.1,
 	"num_predict": 120,
 }
