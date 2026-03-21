@@ -23,6 +23,7 @@ from api import roles
 from api import technologies
 from api import ollama
 from api import azure_openai
+from api import matching
 from middleware.auth_middleware import AuthMiddleware
 # Carga variables desde .env
 
@@ -74,6 +75,7 @@ app.include_router(profiles.router)
 app.include_router(profiles.router, prefix="/api")
 app.include_router(roles.router, prefix="/api")
 app.include_router(technologies.router, prefix="/api")
+app.include_router(matching.router, prefix="/api")
 app.include_router(ollama.router, prefix="/api")
 app.include_router(azure_openai.router, prefix="/api")
 

@@ -7,8 +7,10 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from models.match_result import MatchResult
 from models.job_role import SeniorityLevel
 from exceptions.role_exceptions import RoleNotFoundError
+from repositories.match_result_repository import MatchResultRepository
 from repositories.profile_repository import ProfileRepository
 from repositories.role_repository import RoleRepository
 from utils.string_normalization import normalize_skill_name
@@ -75,6 +77,8 @@ class _RoleRequirement:
 
 class MatchingService:
     def __init__(self, db: Session):
+        self.db = db
+        self.match_result_repo = MatchResultRepository(db)
         self.profile_repo = ProfileRepository(db)
         self.role_repo = RoleRepository(db)
 
@@ -86,6 +90,29 @@ class MatchingService:
 
     def _get_profile(self, user_id: int):
         return self.profile_repo.get_by_user_id(user_id)
+
+    @staticmethod
+    def _normalize_skills(skills) -> set[str]:
+        if not skills:
+            return set()
+
+        normalized_user_skills: set[str] = set()
+        for skill in skills:
+            normalized_skill = normalize_skill_name(skill.name)
+            if normalized_skill:
+                normalized_user_skills.add(normalized_skill)
+
+        return normalized_user_skills
+
+    def _get_profile_context(self, user_id: int) -> tuple[object | None, set[str], list[object]]:
+        profile = self._get_profile(user_id)
+        if not profile:
+            return None, set(), []
+
+        skills = self.profile_repo.list_skills_by_profile_id(profile.id)
+        experiences = self.profile_repo.list_experiences_by_profile_id(profile.id)
+        normalized_user_skills = self._normalize_skills(skills)
+        return profile, normalized_user_skills, experiences
 
     @staticmethod
     def _normalize_decimal(value) -> Decimal | None:
@@ -126,15 +153,7 @@ class MatchingService:
             return set()
 
         skills = self.profile_repo.list_skills_by_profile_id(profile.id)
-        if not skills:
-            return set()
-
-        normalized_user_skills: set[str] = set()
-        for skill in skills:
-            normalized_skill = normalize_skill_name(skill.name)
-            if normalized_skill:
-                normalized_user_skills.add(normalized_skill)
-        return normalized_user_skills
+        return self._normalize_skills(skills)
 
     def _get_user_experiences(self, user_id: int):
         profile = self._get_profile(user_id)
@@ -270,13 +289,12 @@ class MatchingService:
 
         return round(min(max(total_score, 0.0), 100.0), 2)
 
-    def calculate_skill_match(self, user_id: int, role_id: UUID) -> float:
-        normalized_user_skills = self._get_normalized_user_skills(user_id)
+    @staticmethod
+    def _calculate_skill_match_for_role(normalized_user_skills: set[str], role) -> float:
         if not normalized_user_skills:
             return 0.0
 
-        role = self._get_role_or_raise(role_id)
-        requirements = self._get_unique_role_requirements(role)
+        requirements = MatchingService._get_unique_role_requirements(role)
         if not requirements:
             return 0.0
 
@@ -286,21 +304,17 @@ class MatchingService:
 
         matched_weight = 0
         for requirement in requirements:
-            if requirement.normalized_name not in normalized_user_skills:
-                continue
-
-            matched_weight += requirement.importance_weight
+            if requirement.normalized_name in normalized_user_skills:
+                matched_weight += requirement.importance_weight
 
         percentage = (matched_weight / total_weight) * 100
         return round(min(max(percentage, 0.0), 100.0), 2)
 
-    def detect_skill_gaps(self, user_id: int, role_id: UUID) -> list[dict[str, object]]:
-        role = self._get_role_or_raise(role_id)
-        requirements = self._get_unique_role_requirements(role)
+    @staticmethod
+    def _detect_skill_gaps_for_role(normalized_user_skills: set[str], role) -> list[dict[str, object]]:
+        requirements = MatchingService._get_unique_role_requirements(role)
         if not requirements:
             return []
-
-        normalized_user_skills = self._get_normalized_user_skills(user_id)
 
         gaps: list[dict[str, object]] = []
         for requirement in requirements:
@@ -317,43 +331,37 @@ class MatchingService:
 
         return gaps
 
-    def calculate_experience_match(self, user_id: int, role_id: UUID) -> float:
-        profile = self._get_profile(user_id)
-        if not profile:
+    @classmethod
+    def _calculate_experience_match_for_role(cls, profile, experiences, role) -> float:
+        if not profile or not experiences:
             return 0.0
 
-        experiences = self._get_user_experiences(user_id)
-        if not experiences:
-            return 0.0
-
-        role = self._get_role_or_raise(role_id)
-        required_months = self._get_required_experience_months(role)
+        required_months = cls._get_required_experience_months(role)
         if required_months <= 0:
             return 100.0
 
-        user_months = self._get_total_experience_months(experiences)
+        user_months = cls._get_total_experience_months(experiences)
         if user_months <= 0:
             return 0.0
 
         percentage = (user_months / required_months) * 100
         return round(min(max(percentage, 0.0), 100.0), 2)
 
-    def calculate_education_match(self, user_id: int, role_id: UUID) -> float:
-        profile = self._get_profile(user_id)
+    @classmethod
+    def _calculate_education_match_for_role(cls, profile, role) -> float:
         if not profile or not profile.career:
             return 0.0
 
-        role = self._get_role_or_raise(role_id)
         normalized_career = normalize_skill_name(profile.career)
         normalized_role_name = normalize_skill_name(role.name)
         if normalized_career == normalized_role_name:
             return 100.0
 
-        career_domains = self._detect_education_domains(profile.career)
+        career_domains = cls._detect_education_domains(profile.career)
         if not career_domains:
             return 0.0
 
-        role_domains = self._get_role_education_domains(role)
+        role_domains = cls._get_role_education_domains(role)
         if not role_domains:
             return 0.0
 
@@ -365,16 +373,14 @@ class MatchingService:
 
         return round(min(max(best_score, 0.0), 100.0), 2)
 
-    def calculate_preferences_match(self, user_id: int, role_id: UUID) -> float:
-        profile = self._get_profile(user_id)
+    @classmethod
+    def _calculate_preferences_match_for_role(cls, profile, role) -> float:
         if not profile:
             return 0.0
 
-        role = self._get_role_or_raise(role_id)
-
         component_scores = [
-            self._calculate_location_preference_score(profile, role),
-            self._calculate_salary_preference_score(profile, role),
+            cls._calculate_location_preference_score(profile, role),
+            cls._calculate_salary_preference_score(profile, role),
         ]
         available_scores = [score for score in component_scores if score is not None]
         if not available_scores:
@@ -383,19 +389,113 @@ class MatchingService:
         percentage = sum(available_scores) / len(available_scores)
         return round(min(max(percentage, 0.0), 100.0), 2)
 
-    def calculate_match_score(self, user_id: int, role_id: UUID) -> dict[str, object]:
-        self._get_role_or_raise(role_id)
-
+    def _build_match_score_result(
+        self,
+        *,
+        profile,
+        normalized_user_skills: set[str],
+        experiences,
+        role,
+    ) -> dict[str, object]:
         breakdown = {
-            "skill_match": self.calculate_skill_match(user_id, role_id),
-            "experience_match": self.calculate_experience_match(user_id, role_id),
-            "education_match": self.calculate_education_match(user_id, role_id),
-            "preferences_match": self.calculate_preferences_match(user_id, role_id),
+            "skill_match": self._calculate_skill_match_for_role(normalized_user_skills, role),
+            "experience_match": self._calculate_experience_match_for_role(profile, experiences, role),
+            "education_match": self._calculate_education_match_for_role(profile, role),
+            "preferences_match": self._calculate_preferences_match_for_role(profile, role),
         }
         total_score = self._calculate_weighted_match_score(breakdown)
 
         return {
             "total_score": total_score,
             "breakdown": breakdown,
-            "skill_gaps": self.detect_skill_gaps(user_id, role_id),
+            "skill_gaps": self._detect_skill_gaps_for_role(normalized_user_skills, role),
+        }
+
+    def calculate_skill_match(self, user_id: int, role_id: UUID) -> float:
+        role = self._get_role_or_raise(role_id)
+        normalized_user_skills = self._get_normalized_user_skills(user_id)
+        return self._calculate_skill_match_for_role(normalized_user_skills, role)
+
+    def detect_skill_gaps(self, user_id: int, role_id: UUID) -> list[dict[str, object]]:
+        role = self._get_role_or_raise(role_id)
+        normalized_user_skills = self._get_normalized_user_skills(user_id)
+        return self._detect_skill_gaps_for_role(normalized_user_skills, role)
+
+    def calculate_experience_match(self, user_id: int, role_id: UUID) -> float:
+        role = self._get_role_or_raise(role_id)
+        profile = self._get_profile(user_id)
+        experiences = self._get_user_experiences(user_id)
+        return self._calculate_experience_match_for_role(profile, experiences, role)
+
+    def calculate_education_match(self, user_id: int, role_id: UUID) -> float:
+        role = self._get_role_or_raise(role_id)
+        profile = self._get_profile(user_id)
+        return self._calculate_education_match_for_role(profile, role)
+
+    def calculate_preferences_match(self, user_id: int, role_id: UUID) -> float:
+        role = self._get_role_or_raise(role_id)
+        profile = self._get_profile(user_id)
+        return self._calculate_preferences_match_for_role(profile, role)
+
+    def calculate_match_score(self, user_id: int, role_id: UUID) -> dict[str, object]:
+        role = self._get_role_or_raise(role_id)
+        profile, normalized_user_skills, experiences = self._get_profile_context(user_id)
+        return self._build_match_score_result(
+            profile=profile,
+            normalized_user_skills=normalized_user_skills,
+            experiences=experiences,
+            role=role,
+        )
+
+    def calculate_and_cache_matches_for_user(self, user_id: int) -> dict[str, object]:
+        roles = self.role_repo.list_available_roles()
+        profile, normalized_user_skills, experiences = self._get_profile_context(user_id)
+        existing_match_results = {
+            match_result.role_id: match_result
+            for match_result in self.match_result_repo.list_by_user_id(user_id)
+        }
+        created_count = 0
+        updated_count = 0
+        results: list[dict[str, object]] = []
+
+        for role in roles:
+            calculated_result = self._build_match_score_result(
+                profile=profile,
+                normalized_user_skills=normalized_user_skills,
+                experiences=experiences,
+                role=role,
+            )
+            total_score = self._normalize_decimal(calculated_result["total_score"])
+            existing_match_result = existing_match_results.get(role.id)
+
+            if existing_match_result:
+                existing_match_result.total_score = total_score
+                updated_count += 1
+            else:
+                match_result = MatchResult(
+                    user_id=user_id,
+                    role_id=role.id,
+                    total_score=total_score,
+                )
+                self.db.add(match_result)
+                existing_match_results[role.id] = match_result
+                created_count += 1
+
+            results.append(
+                {
+                    "role_id": str(role.id),
+                    "role_name": role.name,
+                    "total_score": calculated_result["total_score"],
+                    "breakdown": calculated_result["breakdown"],
+                    "skill_gaps": calculated_result["skill_gaps"],
+                }
+            )
+
+        self.db.commit()
+
+        return {
+            "processed_roles": len(roles),
+            "created": created_count,
+            "updated": updated_count,
+            "results": results,
         }
