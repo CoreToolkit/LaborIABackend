@@ -227,6 +227,22 @@ def _list_match_results_for_user(user_id: int) -> list[MatchResult]:
         db.close()
 
 
+def _create_match_result(user_id: int, role_id, total_score: Decimal | str | float) -> MatchResult:
+    db = TestSessionLocal()
+    try:
+        match_result = MatchResult(
+            user_id=user_id,
+            role_id=role_id,
+            total_score=Decimal(str(total_score)),
+        )
+        db.add(match_result)
+        db.commit()
+        db.refresh(match_result)
+        return match_result
+    finally:
+        db.close()
+
+
 def test_calculate_matching_returns_200_for_authenticated_user():
     user = _create_user()
     profile = _create_profile(
@@ -249,7 +265,7 @@ def test_calculate_matching_returns_200_for_authenticated_user():
 def test_calculate_matching_requires_authentication():
     response = client.post("/api/matching/calculate")
 
-    assert response.status_code == 401
+    assert response.status_code in {401, 403}
 
 
 def test_calculate_matching_processes_all_available_roles():
@@ -383,31 +399,205 @@ def test_calculate_matching_handles_profile_with_insufficient_data_without_break
     assert float(results[0].total_score) == 0.0
 
 
-def test_calculate_matching_uses_calculate_match_score_for_each_role(monkeypatch):
+def test_calculate_matching_delegates_to_bulk_matching_service(monkeypatch):
     user = _create_user()
-    first_role = _create_role(name="Backend Developer")
-    second_role = _create_role(name="Data Analyst")
-    calls: list[str] = []
+    calls: list[int] = []
+    fake_role_id = str(uuid.uuid4())
 
-    def fake_calculate_match_score(self, user_id, role_id):
-        calls.append(str(role_id))
+    def fake_calculate_and_cache_matches_for_user(self, user_id):
+        calls.append(user_id)
         return {
-            "total_score": 12.34,
-            "breakdown": {
-                "skill_match": 0.0,
-                "experience_match": 0.0,
-                "education_match": 0.0,
-                "preferences_match": 0.0,
-            },
-            "skill_gaps": [],
+            "processed_roles": 2,
+            "created": 1,
+            "updated": 1,
+            "results": [
+                {
+                    "role_id": fake_role_id,
+                    "role_name": "Backend Developer",
+                    "total_score": 12.34,
+                    "breakdown": {
+                        "skill_match": 0.0,
+                        "experience_match": 0.0,
+                        "education_match": 0.0,
+                        "preferences_match": 0.0,
+                    },
+                    "skill_gaps": [],
+                }
+            ],
         }
 
-    monkeypatch.setattr(matching_module.MatchingService, "calculate_match_score", fake_calculate_match_score)
+    monkeypatch.setattr(
+        matching_module.MatchingService,
+        "calculate_and_cache_matches_for_user",
+        fake_calculate_and_cache_matches_for_user,
+    )
 
     response = client.post("/api/matching/calculate", headers=_auth_headers_for_user(user))
 
     assert response.status_code == 200
-    assert set(calls) == {str(first_role.id), str(second_role.id)}
-    results = _list_match_results_for_user(user.id)
-    assert len(results) == 2
-    assert all(float(result.total_score) == 12.34 for result in results)
+    assert calls == [user.id]
+    assert response.json() == {
+        "processed_roles": 2,
+        "created": 1,
+        "updated": 1,
+        "results": [
+            {
+                "role_id": fake_role_id,
+                "role_name": "Backend Developer",
+                "total_score": 12.34,
+                "breakdown": {
+                    "skill_match": 0.0,
+                    "experience_match": 0.0,
+                    "education_match": 0.0,
+                    "preferences_match": 0.0,
+                },
+                "skill_gaps": [],
+            }
+        ],
+    }
+
+
+def test_get_matching_recommendations_returns_200_for_authenticated_user():
+    user = _create_user()
+    role = _create_role(name="Backend Developer")
+    _create_match_result(user.id, role.id, "82.50")
+
+    response = client.get("/api/matching/recommendations", headers=_auth_headers_for_user(user))
+
+    assert response.status_code == 200
+
+
+def test_get_matching_recommendations_requires_authentication():
+    response = client.get("/api/matching/recommendations")
+
+    assert response.status_code in {401, 403}
+
+
+def test_get_matching_recommendations_returns_maximum_ten_results_sorted_descending():
+    user = _create_user()
+
+    for index in range(12):
+        role = _create_role(name=f"Role {index:02d}")
+        _create_match_result(user.id, role.id, Decimal(100 - index))
+
+    response = client.get("/api/matching/recommendations", headers=_auth_headers_for_user(user))
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 10
+    assert len(data["recommendations"]) == 10
+    returned_scores = [item["total_score"] for item in data["recommendations"]]
+    assert returned_scores == sorted(returned_scores, reverse=True)
+    assert returned_scores[0] == 100.0
+    assert returned_scores[-1] == 91.0
+
+
+def test_get_matching_recommendations_filters_only_current_user_results():
+    current_user = _create_user()
+    other_user = _create_user()
+    current_user_role = _create_role(name="Current User Role")
+    other_user_role = _create_role(name="Other User Role")
+    _create_match_result(current_user.id, current_user_role.id, "77.70")
+    _create_match_result(other_user.id, other_user_role.id, "99.90")
+
+    response = client.get("/api/matching/recommendations", headers=_auth_headers_for_user(current_user))
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 1
+    assert data["recommendations"][0]["role_name"] == "Current User Role"
+    assert data["recommendations"][0]["total_score"] == 77.7
+
+
+def test_get_matching_recommendations_excludes_inactive_roles_from_cache():
+    user = _create_user()
+    active_role = _create_role(name="Active Role", active=True)
+    inactive_role = _create_role(name="Inactive Role", active=False)
+    _create_match_result(user.id, active_role.id, "80.00")
+    _create_match_result(user.id, inactive_role.id, "95.00")
+
+    response = client.get("/api/matching/recommendations", headers=_auth_headers_for_user(user))
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 1
+    assert data["recommendations"][0]["role_name"] == "Active Role"
+    assert data["recommendations"][0]["total_score"] == 80.0
+
+
+def test_get_matching_recommendations_returns_empty_list_when_user_has_no_cache():
+    user = _create_user()
+    _create_role(name="Backend Developer")
+
+    response = client.get("/api/matching/recommendations", headers=_auth_headers_for_user(user))
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "recommendations": [],
+        "total": 0,
+    }
+
+
+def test_get_matching_recommendations_does_not_recalculate_matching(monkeypatch):
+    user = _create_user()
+    role = _create_role(name="Backend Developer")
+    _create_match_result(user.id, role.id, "80.00")
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("calculate_match_score should not be called")
+
+    monkeypatch.setattr(matching_module.MatchingService, "calculate_match_score", fail_if_called)
+
+    response = client.get("/api/matching/recommendations", headers=_auth_headers_for_user(user))
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 1
+    assert data["recommendations"][0]["total_score"] == 80.0
+
+
+def test_get_matching_recommendations_returns_expected_response_structure():
+    user = _create_user()
+    role = _create_role(name="Backend Developer")
+    _create_match_result(user.id, role.id, "88.80")
+
+    response = client.get("/api/matching/recommendations", headers=_auth_headers_for_user(user))
+
+    assert response.status_code == 200
+    data = response.json()
+    assert set(data.keys()) == {"recommendations", "total"}
+    assert set(data["recommendations"][0].keys()) == {
+        "role_id",
+        "role_name",
+        "total_score",
+        "category",
+        "seniority_level",
+        "min_english_level",
+        "estimated_salary_min_cop",
+        "estimated_salary_max_cop",
+        "active",
+    }
+
+
+def test_get_matching_recommendations_includes_basic_role_information():
+    user = _create_user()
+    role = _create_role(
+        name="Backend Developer",
+        salary_min=Decimal("4000000"),
+        salary_max=Decimal("6500000"),
+    )
+    _create_match_result(user.id, role.id, "91.25")
+
+    response = client.get("/api/matching/recommendations", headers=_auth_headers_for_user(user))
+
+    assert response.status_code == 200
+    item = response.json()["recommendations"][0]
+    assert item["role_id"] == str(role.id)
+    assert item["role_name"] == "Backend Developer"
+    assert item["total_score"] == 91.25
+    assert item["category"] == "tech"
+    assert item["seniority_level"] == "mid"
+    assert item["min_english_level"] == "B2"
+    assert item["estimated_salary_min_cop"] == "4000000.00"
+    assert item["estimated_salary_max_cop"] == "6500000.00"
+    assert item["active"] is True

@@ -499,3 +499,6 @@ class MatchingService:
             "updated": updated_count,
             "results": results,
         }
+
+    def get_cached_recommendations_for_user(self, user_id: int, limit: int = 10) -> list[MatchResult]:
+        return self.match_result_repo.list_top_recommendations_by_user_id(user_id, limit=limit)
