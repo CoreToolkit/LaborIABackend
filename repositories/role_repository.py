@@ -68,6 +68,17 @@ class RoleRepository:
             .first()
         )
 
+    def list_available_roles(self) -> list[JobRole]:
+        return (
+            self.db.query(JobRole)
+            .options(
+                selectinload(JobRole.role_skills).selectinload(RoleSkill.technology),
+            )
+            .filter(JobRole.active.is_(True))
+            .order_by(JobRole.name.asc())
+            .all()
+        )
+
     def get_technologies_by_ids(self, technology_ids: list[int]) -> list[Technology]:
         if not technology_ids:
             return []

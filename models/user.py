@@ -17,3 +17,4 @@ class User(Base):
 
     # Relationship 1-1
     profile = relationship("Profile", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    match_results = relationship("MatchResult", back_populates="user")

@@ -7,3 +7,5 @@ from models.refresh_token import RefreshToken
 from models.job_role import JobRole, JobRoleCategory, SeniorityLevel, RoleEnglishLevel
 from models.technology import Technology
 from models.role_skill import RoleSkill
+from models.match_result import MatchResult
+from models.question import Question
