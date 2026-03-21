@@ -1,8 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException
-from difflib import SequenceMatcher
 from sqlalchemy.orm import Session
 from ai.ollama_service import OllamaService
 from ai.ollama_client import OllamaClient
+from ai.question_deduplication import (
+    merge_previous_questions,
+    is_repeated_or_too_similar,
+    normalize_question,
+    MAX_QUESTION_HISTORY,
+    MAX_GENERATION_ATTEMPTS,
+)
 from core.database import get_db
 from core.jwt import get_current_user
 from exceptions.profile_exceptions import ProfileNotFoundError
@@ -20,47 +26,6 @@ router = APIRouter(
 ollama_service = OllamaService()
 ollama_client = OllamaClient(ollama_service)
 _question_history_by_user: dict[int, list[str]] = {}
-_MAX_QUESTION_HISTORY = 30
-_MAX_GENERATION_ATTEMPTS = 3
-_SIMILARITY_THRESHOLD = 0.82
-
-
-def _normalize_question(text: str) -> str:
-    return " ".join((text or "").strip().lower().split())
-
-
-def _merge_previous_questions(*question_lists: list[str]) -> list[str]:
-    merged: list[str] = []
-    seen: set[str] = set()
-
-    for questions in question_lists:
-        for question in questions:
-            normalized = _normalize_question(question)
-            if not normalized or normalized in seen:
-                continue
-            seen.add(normalized)
-            merged.append(question)
-
-    return merged
-
-
-def _question_similarity(a: str, b: str) -> float:
-    return SequenceMatcher(None, _normalize_question(a), _normalize_question(b)).ratio()
-
-
-def _is_repeated_or_too_similar(question: str, previous_questions: list[str]) -> bool:
-    normalized_question = _normalize_question(question)
-    if not normalized_question:
-        return True
-
-    for prev in previous_questions:
-        normalized_prev = _normalize_question(prev)
-        if normalized_question == normalized_prev:
-            return True
-        if _question_similarity(normalized_question, normalized_prev) >= _SIMILARITY_THRESHOLD:
-            return True
-
-    return False
 
 
 @router.get("/health")
@@ -149,7 +114,7 @@ async def generate_interview_question(
             body_previous_questions = [str(item) for item in raw_previous if str(item).strip()]
 
         backend_history = _question_history_by_user.get(user_id, [])
-        previous_questions = _merge_previous_questions(body_previous_questions, backend_history)
+        previous_questions = merge_previous_questions(body_previous_questions, backend_history)
 
         options = get_question_generation_options(
             {
@@ -162,8 +127,8 @@ async def generate_interview_question(
         retried = False
         generated_in_request: list[str] = []
 
-        for attempt in range(_MAX_GENERATION_ATTEMPTS):
-            combined_previous = _merge_previous_questions(previous_questions, generated_in_request)
+        for attempt in range(MAX_GENERATION_ATTEMPTS):
+            combined_previous = merge_previous_questions(previous_questions, generated_in_request)
 
             system_prompt, prompt = build_question_generation_prompts(
                 profile=profile,
@@ -189,7 +154,7 @@ async def generate_interview_question(
                 num_predict=options["num_predict"],
             )
 
-            if result and not _is_repeated_or_too_similar(result, combined_previous):
+            if result and not is_repeated_or_too_similar(result, combined_previous):
                 break
 
             if result:
@@ -199,9 +164,9 @@ async def generate_interview_question(
             raise HTTPException(status_code=502, detail="El modelo no devolvio una pregunta valida")
 
         user_history = list(backend_history)
-        if not _is_repeated_or_too_similar(result, user_history):
+        if not is_repeated_or_too_similar(result, user_history):
             user_history.append(result)
-        _question_history_by_user[user_id] = user_history[-_MAX_QUESTION_HISTORY:]
+        _question_history_by_user[user_id] = user_history[-MAX_QUESTION_HISTORY:]
 
         return {
             "question": result,
