@@ -17,7 +17,7 @@ except ImportError:  # pragma: no cover - fallback for test env without starlett
         def __call__(self, scope, receive, send):
             return self.app(scope, receive, send)
 
-from api import auth
+from api import auth, websockets
 from api import profiles
 from api import roles
 from api import technologies
@@ -78,5 +78,6 @@ app.include_router(technologies.router, prefix="/api")
 app.include_router(matching.router, prefix="/api")
 app.include_router(ollama.router, prefix="/api")
 app.include_router(azure_openai.router, prefix="/api")
+app.include_router(websockets.router, prefix="/api")
 
 
