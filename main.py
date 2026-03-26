@@ -38,9 +38,10 @@ app = FastAPI()
 
 local_host_front = os.getenv("LOCAL_HOST_FRONT")
 local_ip = os.getenv("LOCAL_IP")
+front_ip = os.getenv("FRONTEND_URL")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[local_host_front, local_ip],
+    allow_origins=[local_host_front, local_ip, front_ip],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
