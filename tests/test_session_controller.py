@@ -102,6 +102,41 @@ def test_get_session_detail_returns_session_for_authenticated_owner():
     assert response.json()["user_id"] == user.id
 
 
+def test_list_sessions_returns_only_sessions_for_authenticated_user_in_recent_order():
+    user = _create_user()
+    stranger = _create_user()
+    oldest = _create_interview_session(user.id)
+    newest = _create_interview_session(user.id)
+    _create_interview_session(stranger.id)
+    headers = _auth_headers_for_user(user)
+
+    response = client.get("/api/sessions", headers=headers)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data, list)
+    assert len(data) == 2
+    assert [item["id"] for item in data] == [newest.id, oldest.id]
+    assert all(set(item.keys()) == {"id", "user_id", "created_at", "updated_at"} for item in data)
+    assert all(item["user_id"] == user.id for item in data)
+
+
+def test_list_sessions_returns_empty_list_when_user_has_no_sessions():
+    user = _create_user()
+    headers = _auth_headers_for_user(user)
+
+    response = client.get("/api/sessions", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_list_sessions_requires_authentication():
+    response = client.get("/api/sessions")
+
+    assert response.status_code == 401
+
+
 def test_get_session_detail_returns_404_when_not_found():
     user = _create_user()
     headers = _auth_headers_for_user(user)

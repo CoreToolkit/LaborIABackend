@@ -14,6 +14,19 @@ router = APIRouter(
 )
 
 
+@router.get("")
+def list_sessions(
+    response: Response,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    service = InterviewSessionService(db)
+    sessions = service.list_sessions(current_user["id"])
+
+    response.status_code = status.HTTP_200_OK
+    return [InterviewSessionResponse.model_validate(session).model_dump(mode="json") for session in sessions]
+
+
 @router.get("/{session_id}")
 def get_session_detail(
     session_id: int,
