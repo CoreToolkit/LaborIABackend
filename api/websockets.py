@@ -33,7 +33,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id:str):
                 break
 
             if "bytes"in message:
-                await manager.broadcast_bytes(message["bytes"], room_id, websocket)
+                await manager.broadcast_bytes(message["bytes"], room_id, sender=websocket, sender_id=user_id)
             
             elif "text" in message:
                 await manager.broadcast_text(message["text"], room_id, sender=websocket)

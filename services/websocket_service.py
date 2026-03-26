@@ -22,12 +22,14 @@ class ConnectionManager:
         if not self.rooms[room_id]: 
             del self.rooms[room_id]
 
-    async def broadcast_bytes(self, data: bytes, room_id: str, sender: WebSocket):
+    async def broadcast_bytes(self, data: bytes, room_id: str, sender: WebSocket = None, sender_id: str = ""):
         if room_id not in self.rooms:
             return
+        uid_bytes = sender_id.encode("utf-8")
+        framed = bytes([len(uid_bytes)]) + uid_bytes + data
         for connection in self.rooms[room_id]:
             if connection != sender:
-                await connection.send_bytes(data)
+                await connection.send_bytes(framed)
 
     async def broadcast_text(self, message: str, room_id: str, sender: WebSocket = None):
         if room_id not in self.rooms:
