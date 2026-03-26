@@ -17,13 +17,13 @@ manager = ConnectionManager()
 
 @router.websocket("/{room_id}/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id:str):
-    await manager.connect(websocket, room_id)
+    await manager.connect(websocket, room_id, user_id)
 
     await manager.broadcast_text(
         json.dumps({
             "event": "user_joined",
             "user_id": user_id
-        }), room_id
+        }), room_id, sender_id=user_id
     )
     try:
         while True:
@@ -32,11 +32,11 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id:str):
             if message["type"] == "websocket.disconnect":
                 break
 
-            if "bytes"in message:
-                await manager.broadcast_bytes(message["bytes"], room_id, sender=websocket, sender_id=user_id)
+            if "bytes" in message:
+                await manager.broadcast_bytes(message["bytes"], room_id, sender_id=user_id)
             
             elif "text" in message:
-                await manager.broadcast_text(message["text"], room_id, sender=websocket)
+                await manager.broadcast_text(message["text"], room_id, sender_id=user_id)
     except WebSocketDisconnect:
         pass
     except RuntimeError:
@@ -47,7 +47,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id:str):
             json.dumps({
                 "event": "user_left",
                 "user_id": user_id
-            }), room_id
+            }), room_id, sender_id=user_id
         )
 
 
