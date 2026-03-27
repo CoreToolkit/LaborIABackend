@@ -7,3 +7,15 @@ class AzureSpeechClient:
 
     def create_recognizer(self, audio_config):
         return self.service.create_speech_recognizer(audio_config)
+
+    def transcribe(
+        self,
+        audio_bytes: bytes,
+        filename: str = None,
+        language: str = None,
+    ) -> str:
+        return self.service.transcribe_audio(
+            audio_bytes=audio_bytes,
+            filename=filename,
+            language=language,
+        )
