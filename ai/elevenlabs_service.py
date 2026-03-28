@@ -68,3 +68,23 @@ class ElevenLabsService:
             raise Exception(f"ElevenLabs devolvió error HTTP: {detail}")
         except Exception as e:
             raise Exception(f"Error en ElevenLabs: {str(e)}")
+
+    async def generate_speech(self, text: str) -> bytes:
+        if not text or not text.strip():
+            raise Exception("'text' es requerido")
+
+        if not self.voice_id:
+            raise Exception("Falta la variable de entorno de ElevenLabs: ELEVENLABS_VOICE_ID")
+
+        response = await self.post(
+            path=f"/text-to-speech/{self.voice_id}",
+            json={"text": text.strip()},
+            params={"output_format": "mp3_44100_128"},
+            headers={"Accept": "audio/mpeg"},
+        )
+
+        audio_bytes = response.content
+        if not audio_bytes:
+            raise Exception("ElevenLabs no devolvió audio válido")
+
+        return audio_bytes

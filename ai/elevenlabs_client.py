@@ -21,3 +21,6 @@ class ElevenLabsClient:
             params=params,
             headers=headers,
         )
+
+    async def generate_speech(self, text: str) -> bytes:
+        return await self.service.generate_speech(text)
