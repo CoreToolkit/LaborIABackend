@@ -35,6 +35,7 @@ async def health_check(current_user: dict = Depends(get_current_user)):
         response = {
             "status": "healthy",
             "message": "ElevenLabs esta configurado",
+            "model_id": elevenlabs_service.model_id,
         }
 
         if elevenlabs_service.voice_id:
@@ -57,15 +58,13 @@ async def generate_speech(
         if elevenlabs_init_error:
             raise HTTPException(status_code=503, detail=elevenlabs_init_error)
 
-        text = body.text
-        if not text or not str(text).strip():
-            raise HTTPException(status_code=400, detail="'text' es requerido")
-
-        audio_bytes = await elevenlabs_client.generate_speech(str(text))
+        audio_bytes = await elevenlabs_client.generate_speech(body.text)
         audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
 
         return ElevenLabsSpeechResponse(audio=audio_base64)
     except HTTPException:
         raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

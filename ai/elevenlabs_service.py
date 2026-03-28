@@ -4,6 +4,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+MAX_TTS_TEXT_LENGTH = 500
+
 
 class ElevenLabsService:
     def __init__(
@@ -11,11 +13,13 @@ class ElevenLabsService:
         api_key: str = None,
         timeout: int = None,
         voice_id: str = None,
+        model_id: str = None,
         base_url: str = None,
     ):
         self.api_key = api_key or os.getenv("ELEVENLABS_API_KEY")
         self.timeout = timeout or int(os.getenv("ELEVENLABS_TIMEOUT", "30"))
         self.voice_id = voice_id or os.getenv("ELEVENLABS_VOICE_ID")
+        self.model_id = model_id or os.getenv("ELEVENLABS_MODEL_ID", "eleven_flash_v2_5")
         self.base_url = base_url or "https://api.elevenlabs.io/v1"
 
         if not self.api_key:
@@ -70,15 +74,22 @@ class ElevenLabsService:
             raise Exception(f"Error en ElevenLabs: {str(e)}")
 
     async def generate_speech(self, text: str) -> bytes:
-        if not text or not text.strip():
-            raise Exception("'text' es requerido")
+        normalized_text = (text or "").strip()
+        if not normalized_text:
+            raise ValueError("'text' es requerido")
+
+        if len(normalized_text) > MAX_TTS_TEXT_LENGTH:
+            raise ValueError(f"'text' no puede superar {MAX_TTS_TEXT_LENGTH} caracteres")
 
         if not self.voice_id:
-            raise Exception("Falta la variable de entorno de ElevenLabs: ELEVENLABS_VOICE_ID")
+            raise RuntimeError("Falta la variable de entorno de ElevenLabs: ELEVENLABS_VOICE_ID")
 
         response = await self.post(
             path=f"/text-to-speech/{self.voice_id}",
-            json={"text": text.strip()},
+            json={
+                "text": normalized_text,
+                "model_id": self.model_id,
+            },
             params={"output_format": "mp3_44100_128"},
             headers={"Accept": "audio/mpeg"},
         )
