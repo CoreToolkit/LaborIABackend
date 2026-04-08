@@ -106,3 +106,5 @@ No cambia el despliegue productivo de Render en esta fase.
 
 - Las variables sensibles se inyectan en runtime; no se usan como parte del build.
 - `test.db` y `reports/` están excluidos del repositorio.
+
+hola :)
