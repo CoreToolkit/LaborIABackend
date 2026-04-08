@@ -71,26 +71,32 @@ jobs:
 
           counter = Counter()
           critical_rows = []
+          high_rows = []
           for result in data.get("Results", []):
               target = result.get("Target", "unknown")
               for vuln in result.get("Vulnerabilities") or []:
                   sev = (vuln.get("Severity") or "UNKNOWN").upper()
                   counter[sev] += 1
+                  row = (
+                      target,
+                      vuln.get("PkgName", "unknown"),
+                      vuln.get("InstalledVersion", "unknown"),
+                      vuln.get("FixedVersion", "unknown"),
+                      vuln.get("VulnerabilityID", "unknown"),
+                  )
                   if sev == "CRITICAL":
-                      critical_rows.append(
-                          (
-                              target,
-                              vuln.get("PkgName", "unknown"),
-                              vuln.get("InstalledVersion", "unknown"),
-                              vuln.get("FixedVersion", "unknown"),
-                              vuln.get("VulnerabilityID", "unknown"),
-                          )
-                      )
+                      critical_rows.append(row)
+                  elif sev == "HIGH":
+                      high_rows.append(row)
 
           print("Trivy severity summary:", dict(counter))
           if critical_rows:
               print("Critical findings:")
               for row in critical_rows:
+                  print(" - target=%s pkg=%s installed=%s fixed=%s cve=%s" % row)
+          if high_rows:
+              print("High findings (top 20):")
+              for row in high_rows[:20]:
                   print(" - target=%s pkg=%s installed=%s fixed=%s cve=%s" % row)
           PY
 
