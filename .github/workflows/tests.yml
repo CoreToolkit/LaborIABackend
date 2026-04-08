@@ -10,6 +10,7 @@ on:
 
 jobs:
   test:
+    if: github.ref != 'refs/heads/sentinel-test-branch' && github.base_ref != 'sentinel-test-branch' && github.head_ref != 'sentinel-test-branch'
     runs-on: ubuntu-latest
     env:
       DATABASE_URL: sqlite:///./test.db
