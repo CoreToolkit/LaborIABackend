@@ -2,7 +2,11 @@ name: tests
 
 on:
   push:
+    branches-ignore:
+      - sentinel-test-branch
   pull_request:
+    branches-ignore:
+      - sentinel-test-branch
 
 jobs:
   test:

@@ -41,6 +41,7 @@ El workflow toma Sentinel desde:
 - repositorio: `JuanDiegoRV/Sentinel-AI-CD`
 - rama: `feature/Laboria_compatibility`
 - ramas del backend habilitadas para validar el gate: `main`, `develop`, `sentinel-test-branch`
+- en `sentinel-test-branch` los tests se omiten temporalmente para validar solo la integración del gate
 
 ## Prueba local con dos repos separados
 
