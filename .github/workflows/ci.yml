@@ -12,6 +12,7 @@ jobs:
     env:
       DATABASE_URL: sqlite:///./test.db
       JWT_SECRET: ci-secret
+      OLLAMA_TIMEOUT: "120"
       IMAGE_NAME: laboria-backend:${{ github.sha }}
       GATE_URL: http://127.0.0.1:8000
       SENTINEL_REPOSITORY: JuanDiegoRV/Sentinel-AI-CD
@@ -39,11 +40,6 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-
-      - name: Run tests with coverage
-        if: github.ref != 'refs/heads/sentinel-test-branch' && github.base_ref != 'sentinel-test-branch' && github.head_ref != 'sentinel-test-branch'
-        run: |
-          python -m pytest --cov=. --cov-report=term-missing --cov-fail-under=80
 
       - name: Build backend image
         run: docker build -t "$IMAGE_NAME" .

@@ -28,20 +28,19 @@ Backend FastAPI de LaborIA con pruebas unitarias, migraciones Alembic y gate de 
 
 `LaborIABackend` no embebe Sentinel. El pipeline hace:
 
-1. Ejecuta pruebas del backend
-2. Construye la imagen Docker del backend
-3. Escanea la imagen con `trivy image`
-4. Levanta `Sentinel-AI-CD`
-5. Envía el reporte mediante el adaptador oficial `pipeline/trivy_to_gate.py`
-6. Bloquea deploy solo si la respuesta es `REJECTED`
-7. Continúa si la decisión es `WARNING` o `APPROVED`
+1. Construye la imagen Docker del backend
+2. Escanea la imagen con `trivy image`
+3. Levanta `Sentinel-AI-CD`
+4. Envía el reporte mediante el adaptador oficial `pipeline/trivy_to_gate.py`
+5. Bloquea deploy solo si la respuesta es `REJECTED`
+6. Continúa si la decisión es `WARNING` o `APPROVED`
 
 El workflow toma Sentinel desde:
 
 - repositorio: `JuanDiegoRV/Sentinel-AI-CD`
 - rama: `feature/Laboria_compatibility`
 - ramas del backend habilitadas para validar el gate: `main`, `develop`, `sentinel-test-branch`
-- en `sentinel-test-branch` los tests se omiten temporalmente para validar solo la integración del gate
+- en esta fase de prueba el workflow de Actions valida solo la integración con Sentinel; no ejecuta `pytest`
 
 ## Prueba local con dos repos separados
 
@@ -101,7 +100,6 @@ No cambia el despliegue productivo de Render en esta fase.
 - `Dockerfile`
 - `.dockerignore`
 - `.github/workflows/ci.yml`
-- `.github/workflows/tests.yml`
 
 ## Notas
 
