@@ -68,7 +68,7 @@ jobs:
       - name: Start Sentinel and evaluate image
         run: |
           export AI_DISABLED=true
-          PYTHONPATH=sentinel-ai-cd/app python -m uvicorn main:app --host 127.0.0.1 --port 8000 > reports/sentinel.log 2>&1 &
+          python -m uvicorn --app-dir sentinel-ai-cd/app main:app --host 127.0.0.1 --port 8000 > reports/sentinel.log 2>&1 &
           sentinel_pid=$!
           trap 'kill $sentinel_pid >/dev/null 2>&1 || true' EXIT
 
