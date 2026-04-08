@@ -2,9 +2,10 @@ name: CI and Deploy
 
 on:
   push:
-    branches: [main, develop, sentinel-test-branch]
+    branches: [main, develop, sentinel-smoke-test]
   pull_request:
-    branches: [main, develop, sentinel-test-branch]
+    branches: [main, develop, sentinel-smoke-test]
+
 
 jobs:
   ci:
