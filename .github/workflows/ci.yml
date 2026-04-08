@@ -65,25 +65,26 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r sentinel-ai-cd/requirements.txt
 
-      - name: Start Sentinel gate
+      - name: Start Sentinel and evaluate image
         run: |
           export AI_DISABLED=true
-          python -m uvicorn main:app --host 127.0.0.1 --port 8000 > ../reports/sentinel.log 2>&1 &
-        working-directory: sentinel-ai-cd/app
+          PYTHONPATH=sentinel-ai-cd/app python -m uvicorn main:app --host 127.0.0.1 --port 8000 > reports/sentinel.log 2>&1 &
+          sentinel_pid=$!
+          trap 'kill $sentinel_pid >/dev/null 2>&1 || true' EXIT
 
-      - name: Wait for Sentinel healthcheck
-        run: |
           for attempt in 1 2 3 4 5 6 7 8 9 10; do
             if curl -fsS "${GATE_URL}/health" > /dev/null; then
-              exit 0
+              break
             fi
             sleep 2
           done
-          echo "Sentinel gate did not become healthy in time" >&2
-          exit 1
 
-      - name: Evaluate image with Sentinel
-        run: |
+          if ! curl -fsS "${GATE_URL}/health" > /dev/null; then
+            echo "Sentinel gate did not become healthy in time" >&2
+            cat reports/sentinel.log || true
+            exit 1
+          fi
+
           set +e
           python sentinel-ai-cd/pipeline/trivy_to_gate.py \
             --report reports/trivy-image.json \
@@ -94,6 +95,7 @@ jobs:
           set -e
 
           echo "gate_exit=$gate_exit" >> "$GITHUB_OUTPUT"
+          cat reports/sentinel.log || true
 
           if [ "$gate_exit" -eq 1 ]; then
             echo "Sentinel rejected the image. Blocking deploy."
