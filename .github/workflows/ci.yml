@@ -60,6 +60,40 @@ jobs:
             --exit-code 0 \
             "$IMAGE_NAME"
 
+      - name: Summarize Trivy findings
+        run: |
+          python - <<'PY'
+          import json
+          from collections import Counter
+
+          with open("reports/trivy-image.json", "r", encoding="utf-8") as f:
+              data = json.load(f)
+
+          counter = Counter()
+          critical_rows = []
+          for result in data.get("Results", []):
+              target = result.get("Target", "unknown")
+              for vuln in result.get("Vulnerabilities") or []:
+                  sev = (vuln.get("Severity") or "UNKNOWN").upper()
+                  counter[sev] += 1
+                  if sev == "CRITICAL":
+                      critical_rows.append(
+                          (
+                              target,
+                              vuln.get("PkgName", "unknown"),
+                              vuln.get("InstalledVersion", "unknown"),
+                              vuln.get("FixedVersion", "unknown"),
+                              vuln.get("VulnerabilityID", "unknown"),
+                          )
+                      )
+
+          print("Trivy severity summary:", dict(counter))
+          if critical_rows:
+              print("Critical findings:")
+              for row in critical_rows:
+                  print(" - target=%s pkg=%s installed=%s fixed=%s cve=%s" % row)
+          PY
+
       - name: Install Sentinel dependencies
         run: |
           python -m pip install --upgrade pip
