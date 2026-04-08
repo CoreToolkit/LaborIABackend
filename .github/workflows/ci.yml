@@ -2,34 +2,119 @@ name: CI and Deploy
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, sentinel-test-branch]
   pull_request:
-    branches: [main, develop]
+    branches: [main, develop, sentinel-test-branch]
 
 jobs:
   ci:
     runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: sqlite:///./test.db
+      JWT_SECRET: ci-secret
+      IMAGE_NAME: laboria-backend:${{ github.sha }}
+      GATE_URL: http://127.0.0.1:8000
+      SENTINEL_REPOSITORY: JuanDiegoRV/Sentinel-AI-CD
+      SENTINEL_REF: feature/Laboria_compatibility
     steps:
-      - name: Checkout
+      - name: Checkout backend
         uses: actions/checkout@v5
+
+      - name: Checkout Sentinel
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ env.SENTINEL_REPOSITORY }}
+          ref: ${{ env.SENTINEL_REF }}
+          path: sentinel-ai-cd
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
-      - name: Install dependencies
+      - name: Prepare reports directory
+        run: mkdir -p reports
+
+      - name: Install backend dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Test with coverage (>=80%)
+      - name: Run tests with coverage
         run: |
           python -m pytest --cov=. --cov-report=term-missing --cov-fail-under=80
+
+      - name: Build backend image
+        run: docker build -t "$IMAGE_NAME" .
+
+      - name: Run Trivy image scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.IMAGE_NAME }}
+          format: json
+          output: reports/trivy-image.json
+          severity: CRITICAL,HIGH,MEDIUM
+          ignore-unfixed: true
+          exit-code: "0"
+
+      - name: Install Sentinel dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r sentinel-ai-cd/requirements.txt
+
+      - name: Start Sentinel gate
+        run: |
+          export AI_DISABLED=true
+          python -m uvicorn main:app --host 127.0.0.1 --port 8000 > ../reports/sentinel.log 2>&1 &
+        working-directory: sentinel-ai-cd/app
+
+      - name: Wait for Sentinel healthcheck
+        run: |
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if curl -fsS "${GATE_URL}/health" > /dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Sentinel gate did not become healthy in time" >&2
+          exit 1
+
+      - name: Evaluate image with Sentinel
+        run: |
+          set +e
+          python sentinel-ai-cd/pipeline/trivy_to_gate.py \
+            --report reports/trivy-image.json \
+            --image "$IMAGE_NAME" \
+            --gate "$GATE_URL" \
+            --dockerfile ./Dockerfile
+          gate_exit=$?
+          set -e
+
+          echo "gate_exit=$gate_exit" >> "$GITHUB_OUTPUT"
+
+          if [ "$gate_exit" -eq 1 ]; then
+            echo "Sentinel rejected the image. Blocking deploy."
+            exit 1
+          fi
+
+          if [ "$gate_exit" -eq 3 ]; then
+            echo "Sentinel gate failed technically."
+            exit 3
+          fi
+
+          exit 0
+        id: sentinel_gate
+
+      - name: Upload CI artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sentinel-artifacts
+          path: reports/
 
       - name: Deploy to Render
         if: github.ref == 'refs/heads/main' && success()
         env:
           deploy_url: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
-        run: |
-          curl -X POST "$deploy_url"
+        run: curl -X POST "$deploy_url"

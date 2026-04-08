@@ -6,8 +6,8 @@ from pathlib import Path
 
 def run_command(command, step_name):
     print(f"\n--- {step_name} ---")
-    
-    result = subprocess.run(command, shell=True)
+
+    result = subprocess.run(command, check=False)
 
     if result.returncode != 0:
         print(f"\n❌ Error en: {step_name}")
@@ -18,28 +18,37 @@ def run_command(command, step_name):
 
 def install():
     run_command(
-        "pip install -r requirements.txt",
+        [sys.executable, "-m", "pip", "install", "-r", "requirements.txt"],
         "Instalando dependencias"
     )
 
 
 def test():
     run_command(
-        f"{sys.executable} -m pytest",
+        [sys.executable, "-m", "pytest"],
         "Ejecutando tests"
     )
 
 
 def coverage():
     run_command(
-        f"{sys.executable} -m pytest --cov --cov-branch --cov-report=term-missing --cov-report=html --cov-fail-under=80",
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "--cov",
+            "--cov-branch",
+            "--cov-report=term-missing",
+            "--cov-report=html",
+            "--cov-fail-under=80",
+        ],
         "Calculando coverage"
     )
 
 
 def run():
     run_command(
-        f"{sys.executable} -m uvicorn main:app --reload",
+        [sys.executable, "-m", "uvicorn", "main:app", "--reload"],
         "Levantando API"
     )
 
@@ -48,7 +57,7 @@ def clean():
     print("\n--- Limpiando proyecto ---")
 
     folders = ["__pycache__", ".pytest_cache", "htmlcov"]
-    files = [".coverage"]
+    files = [".coverage", "test.db"]
 
     for folder in folders:
         path = Path(folder)
