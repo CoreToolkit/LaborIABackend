@@ -2,7 +2,7 @@ name: CI and Deploy
 
 on:
   push:
-    branches: [main, develop, sentinel-smoke-test, sentinel-Integration]
+    branches: [main, develop, sentinel-smoke-test]
   pull_request:
     branches: [main, develop, sentinel-smoke-test]
 
@@ -45,16 +45,20 @@ jobs:
       - name: Build backend image
         run: docker build -t "$IMAGE_NAME" .
 
+      - name: Install Trivy
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
+          trivy --version
+
       - name: Run Trivy image scan
-        uses: aquasecurity/trivy-action@0.33.1
-        with:
-          scan-type: image
-          image-ref: ${{ env.IMAGE_NAME }}
-          format: json
-          output: reports/trivy-image.json
-          severity: CRITICAL,HIGH,MEDIUM
-          ignore-unfixed: true
-          exit-code: "0"
+        run: |
+          trivy image \
+            --format json \
+            --output reports/trivy-image.json \
+            --severity CRITICAL,HIGH,MEDIUM \
+            --ignore-unfixed \
+            --exit-code 0 \
+            "$IMAGE_NAME"
 
       - name: Install Sentinel dependencies
         run: |
