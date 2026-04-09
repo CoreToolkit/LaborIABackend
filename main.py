@@ -17,12 +17,15 @@ except ImportError:  # pragma: no cover - fallback for test env without starlett
         def __call__(self, scope, receive, send):
             return self.app(scope, receive, send)
 
-from api import auth
+from api import auth, websockets
 from api import profiles
 from api import roles
+from api import sessions
 from api import technologies
 from api import ollama
 from api import azure_openai
+from api import azure_speech
+from api import elevenlabs
 from api import matching
 from api.evaluations import router as evaluations_router
 from middleware.auth_middleware import AuthMiddleware
@@ -38,9 +41,10 @@ app = FastAPI()
 
 local_host_front = os.getenv("LOCAL_HOST_FRONT")
 local_ip = os.getenv("LOCAL_IP")
+front_ip = os.getenv("FRONTEND_URL")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[local_host_front, local_ip],
+    allow_origins=[local_host_front, local_ip, front_ip],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -75,10 +79,14 @@ app.include_router(auth.router)
 app.include_router(profiles.router)
 app.include_router(profiles.router, prefix="/api")
 app.include_router(roles.router, prefix="/api")
+app.include_router(sessions.router, prefix="/api")
 app.include_router(technologies.router, prefix="/api")
 app.include_router(matching.router, prefix="/api")
 app.include_router(ollama.router, prefix="/api")
 app.include_router(azure_openai.router, prefix="/api")
 app.include_router(evaluations_router)
+app.include_router(azure_speech.router, prefix="/api")
+app.include_router(elevenlabs.router, prefix="/api")
+app.include_router(websockets.router, prefix="/api")
 
 
