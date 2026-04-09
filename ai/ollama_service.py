@@ -19,7 +19,7 @@ class OllamaService:
     ):
         self.base_url = base_url or os.getenv("OLLAMA_BASE_URL")
         self.model_name = model_name or os.getenv("OLLAMA_MODEL")
-        self.timeout = timeout or int(os.getenv("OLLAMA_TIMEOUT"))
+        self.timeout = timeout if timeout is not None else int(os.getenv("OLLAMA_TIMEOUT", "120"))
         self.chat_endpoint = f"{self.base_url}/api/chat"
         self.generate_endpoint = f"{self.base_url}/api/generate"
 
