@@ -8,5 +8,7 @@ from models.job_role import JobRole, JobRoleCategory, SeniorityLevel, RoleEnglis
 from models.technology import Technology
 from models.role_skill import RoleSkill
 from models.match_result import MatchResult
-from models.interview_session import InterviewSession
 from models.question import Question
+from models.evaluation import Evaluation, EvaluationStatus
+from models.interview_session import InterviewSession
+
