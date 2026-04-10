@@ -11,4 +11,5 @@ from models.match_result import MatchResult
 from models.question import Question
 from models.evaluation import Evaluation, EvaluationStatus
 from models.interview_session import InterviewSession
+from models.group_interview_session import GroupInterviewSession
 
