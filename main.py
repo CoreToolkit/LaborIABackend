@@ -22,6 +22,7 @@ from api import profiles
 from api import roles
 from api import questions
 from api import sessions
+from api import group_interview_sessions
 from api import technologies
 from api import ollama
 from api import azure_openai
@@ -82,6 +83,7 @@ app.include_router(profiles.router, prefix="/api")
 app.include_router(roles.router, prefix="/api")
 app.include_router(questions.router, prefix="/api")
 app.include_router(sessions.router, prefix="/api")
+app.include_router(group_interview_sessions.router, prefix="/api")
 app.include_router(technologies.router, prefix="/api")
 app.include_router(matching.router, prefix="/api")
 app.include_router(ollama.router, prefix="/api")
