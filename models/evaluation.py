@@ -13,8 +13,9 @@
 import enum
 import uuid
 
-from sqlalchemy import Column, String, Text, Float, DateTime, ForeignKey, JSON
+from sqlalchemy import Column, String, Text, Float, DateTime, ForeignKey, Integer, JSON
 from sqlalchemy import Enum as SAEnum
+from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from core.database import Base
@@ -43,8 +44,13 @@ class Evaluation(Base):
         index=True,
     )
 
-    # ID de la sesión de entrevista (String para flexibilidad con UUID o int)
-    interview_session_id = Column(String, nullable=False, index=True)
+    # FK a la sesión de entrevista dueña de la pregunta
+    interview_session_id = Column(
+        Integer,
+        ForeignKey("interview_sessions.id"),
+        nullable=False,
+        index=True,
+    )
 
     # Respuesta textual del usuario
     user_answer_text = Column(Text, nullable=False)
@@ -72,3 +78,7 @@ class Evaluation(Base):
 
     evaluated_at = Column(DateTime(timezone=True), server_default=func.now())
     completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Relaciones ORM
+    question = relationship("Question", back_populates="evaluations")
+    interview_session = relationship("InterviewSession", back_populates="evaluations")

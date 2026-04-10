@@ -136,7 +136,35 @@ def test_list_sessions_requires_authentication():
 
     assert response.status_code == 401
 
+# test when David Sarria was mixing everything ------------
 
+def test_create_session_creates_new_session_for_authenticated_user():
+    user = _create_user()
+    headers = _auth_headers_for_user(user)
+
+    response = client.post("/api/sessions", headers=headers)
+
+    assert response.status_code == 201
+    data = response.json()
+    assert set(data.keys()) == {"id", "user_id", "created_at", "updated_at"}
+    assert data["user_id"] == user.id
+    assert data["id"] is not None
+
+    db = TestSessionLocal()
+    try:
+        saved_session = db.query(InterviewSession).filter(InterviewSession.id == data["id"]).first()
+        assert saved_session is not None
+        assert saved_session.user_id == user.id
+    finally:
+        db.close()
+
+
+def test_create_session_requires_authentication():
+    response = client.post("/api/sessions")
+
+    assert response.status_code == 401
+
+# test when David Sarria was mixing everything ------------
 def test_get_session_detail_returns_404_when_not_found():
     user = _create_user()
     headers = _auth_headers_for_user(user)

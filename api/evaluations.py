@@ -89,10 +89,14 @@ async def submit_answer(
     if not question:
         raise HTTPException(status_code=404, detail="Pregunta no encontrada")
 
+    # Asegurar que la pregunta pertenece al usuario autenticado
+    if not question.interview_session or question.interview_session.user_id != current_user["id"]:
+        raise HTTPException(status_code=403, detail="No autorizado para responder esta pregunta")
+
     # Crear registro en PENDING — respuesta inmediata al cliente
     evaluation = Evaluation(
         question_id=body.question_id,
-        interview_session_id=str(question.interview_session_id),
+        interview_session_id=question.interview_session_id,
         user_answer_text=user_answer,
         status=EvaluationStatus.PENDING,
     )
@@ -141,6 +145,10 @@ def get_evaluation(
     evaluation = db.query(Evaluation).filter(Evaluation.id == evaluation_id).first()
     if not evaluation:
         raise HTTPException(status_code=404, detail="Evaluación no encontrada")
+
+    # Asegurar que el usuario solo consulte evaluaciones de sus sesiones
+    if not evaluation.interview_session or evaluation.interview_session.user_id != current_user["id"]:
+        raise HTTPException(status_code=403, detail="No autorizado para ver esta evaluación")
 
     # Normalizar score: -1 (fallo técnico interno) se expone como null al cliente
     score_for_client = evaluation.score if (evaluation.score is not None and evaluation.score >= 0) else None

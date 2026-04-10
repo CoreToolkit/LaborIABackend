@@ -8,6 +8,9 @@ class InterviewSessionService:
     def __init__(self, db: Session):
         self.repo = InterviewSessionRepository(db)
 
+    def create_session(self, user_id: int):
+        return self.repo.create(user_id)
+
     def list_sessions(self, user_id: int):
         return self.repo.list_by_user_id(user_id)
 

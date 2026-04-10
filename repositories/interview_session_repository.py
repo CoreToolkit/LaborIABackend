@@ -7,6 +7,13 @@ class InterviewSessionRepository:
     def __init__(self, db: Session):
         self.db = db
 
+    def create(self, user_id: int) -> InterviewSession:
+        session = InterviewSession(user_id=user_id)
+        self.db.add(session)
+        self.db.commit()
+        self.db.refresh(session)
+        return session
+
     def list_by_user_id(self, user_id: int) -> list[InterviewSession]:
         return (
             self.db.query(InterviewSession)

@@ -15,3 +15,5 @@ class InterviewSession(Base):
 
     # Relationship many-to-1
     user = relationship("User", back_populates="interview_sessions")
+    questions = relationship("Question", back_populates="interview_session", cascade="all, delete-orphan")  # 1-to-many
+    evaluations = relationship("Evaluation", back_populates="interview_session", cascade="all, delete-orphan")
