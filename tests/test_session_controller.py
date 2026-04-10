@@ -18,7 +18,9 @@ from sqlalchemy.orm import sessionmaker
 import api.sessions as sessions_module
 from core.database import Base
 from core.jwt import create_token
+from models.evaluation import Evaluation, EvaluationStatus
 from models.interview_session import InterviewSession
+from models.question import Question
 from models.user import User
 
 
@@ -77,6 +79,41 @@ def _create_interview_session(user_id: int) -> InterviewSession:
         db.close()
 
 
+def _create_question(session_id: int, text: str = "Tell me about your background") -> Question:
+    db = TestSessionLocal()
+    try:
+        question = Question(
+            interview_session_id=session_id,
+            question_text=text,
+            category="general",
+            difficulty="easy",
+            expected_topics=["experience"],
+        )
+        db.add(question)
+        db.commit()
+        db.refresh(question)
+        return question
+    finally:
+        db.close()
+
+
+def _create_evaluation(session_id: int, question_id: int) -> Evaluation:
+    db = TestSessionLocal()
+    try:
+        evaluation = Evaluation(
+            question_id=question_id,
+            interview_session_id=session_id,
+            user_answer_text="I have 3 years of backend experience",
+            status=EvaluationStatus.PENDING,
+        )
+        db.add(evaluation)
+        db.commit()
+        db.refresh(evaluation)
+        return evaluation
+    finally:
+        db.close()
+
+
 def _auth_headers_for_user(user: User) -> dict:
     token = create_token(
         {
@@ -92,14 +129,22 @@ def _auth_headers_for_user(user: User) -> dict:
 def test_get_session_detail_returns_session_for_authenticated_owner():
     user = _create_user()
     session = _create_interview_session(user.id)
+    question = _create_question(session.id)
+    _create_evaluation(session.id, question.id)
     headers = _auth_headers_for_user(user)
 
     response = client.get(f"/api/sessions/{session.id}", headers=headers)
 
     assert response.status_code == 200
-    assert set(response.json().keys()) == {"id", "user_id", "created_at", "updated_at"}
-    assert response.json()["id"] == session.id
-    assert response.json()["user_id"] == user.id
+    payload = response.json()
+    assert set(payload.keys()) == {"id", "user_id", "created_at", "updated_at", "questions", "evaluations"}
+    assert payload["id"] == session.id
+    assert payload["user_id"] == user.id
+    assert len(payload["questions"]) == 1
+    assert payload["questions"][0]["id"] == question.id
+    assert len(payload["evaluations"]) == 1
+    assert payload["evaluations"][0]["question_id"] == question.id
+    assert payload["evaluations"][0]["interview_session_id"] == session.id
 
 
 def test_list_sessions_returns_only_sessions_for_authenticated_user_in_recent_order():

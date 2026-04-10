@@ -1,4 +1,4 @@
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from models.interview_session import InterviewSession
 
@@ -25,6 +25,10 @@ class InterviewSessionRepository:
     def get_by_id_and_user_id(self, session_id: int, user_id: int) -> InterviewSession | None:
         return (
             self.db.query(InterviewSession)
+            .options(
+                selectinload(InterviewSession.questions),
+                selectinload(InterviewSession.evaluations),
+            )
             .filter(InterviewSession.id == session_id, InterviewSession.user_id == user_id)
             .first()
         )

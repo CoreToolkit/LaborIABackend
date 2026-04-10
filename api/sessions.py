@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from core.database import get_db
 from core.jwt import get_current_user
 from exceptions.interview_session_exceptions import InterviewSessionNotFoundError
-from schemas.interview_session import InterviewSessionResponse
+from schemas.interview_session import InterviewSessionDetailResponse, InterviewSessionResponse
 from services.interview_session_service import InterviewSessionService
 
 
@@ -54,4 +54,4 @@ def get_session_detail(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=exc.message) from exc
 
     response.status_code = status.HTTP_200_OK
-    return InterviewSessionResponse.model_validate(session).model_dump(mode="json")
+    return InterviewSessionDetailResponse.model_validate(session).model_dump(mode="json")
