@@ -1,7 +1,9 @@
 import secrets
 import string
 from sqlalchemy.orm import Session
+from repositories.interview_session_repository import InterviewSessionRepository
 from repositories.group_interview_session_repository import GroupInterviewSessionRepository
+from repositories.user_repository import UserRepository
 from exceptions.interview_session_exceptions import InterviewSessionNotFoundError
 
 
@@ -9,6 +11,8 @@ class GroupInterviewSessionService:
     def __init__(self, db: Session):
         self.db = db
         self.repo = GroupInterviewSessionRepository(db)
+        self.interview_session_repo = InterviewSessionRepository(db)
+        self.user_repo = UserRepository(db)
 
     def _generate_unique_session_code(self) -> str:
         """
@@ -77,6 +81,33 @@ class GroupInterviewSessionService:
     def list_active_sessions(self, limit: int = 50):
         """Listar sesiones grupales activas disponibles para unirse."""
         return self.repo.list_active(limit=limit)
+
+    def join_group_session(self, session_code: str, user_id: int):
+        """
+        Unir usuario a una sesión grupal y crear/reutilizar su InterviewSession individual.
+
+        Returns:
+            tuple[group_session, interview_session]
+        """
+        user = self.user_repo.get_by_id(user_id)
+        if not user:
+            raise ValueError("User not found")
+
+        group_session = self.get_group_session_by_code(session_code)
+
+        interview_session = self.interview_session_repo.get_by_user_id_and_group_session_id(
+            user_id=user_id,
+            group_interview_session_id=group_session.id,
+        )
+
+        if interview_session:
+            return group_session, interview_session
+
+        interview_session = self.interview_session_repo.create_for_group(
+            user_id=user_id,
+            group_interview_session_id=group_session.id,
+        )
+        return group_session, interview_session
 
     def delete_group_session(self, group_session_id: int, host_id: int) -> bool:
         """

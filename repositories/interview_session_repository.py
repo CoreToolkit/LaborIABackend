@@ -14,6 +14,16 @@ class InterviewSessionRepository:
         self.db.refresh(session)
         return session
 
+    def create_for_group(self, user_id: int, group_interview_session_id: int) -> InterviewSession:
+        session = InterviewSession(
+            user_id=user_id,
+            group_interview_session_id=group_interview_session_id,
+        )
+        self.db.add(session)
+        self.db.commit()
+        self.db.refresh(session)
+        return session
+
     def list_by_user_id(self, user_id: int) -> list[InterviewSession]:
         return (
             self.db.query(InterviewSession)
@@ -30,5 +40,20 @@ class InterviewSessionRepository:
                 selectinload(InterviewSession.evaluations),
             )
             .filter(InterviewSession.id == session_id, InterviewSession.user_id == user_id)
+            .first()
+        )
+
+    def get_by_user_id_and_group_session_id(
+        self,
+        user_id: int,
+        group_interview_session_id: int,
+    ) -> InterviewSession | None:
+        return (
+            self.db.query(InterviewSession)
+            .filter(
+                InterviewSession.user_id == user_id,
+                InterviewSession.group_interview_session_id == group_interview_session_id,
+            )
+            .order_by(InterviewSession.id.desc())
             .first()
         )
