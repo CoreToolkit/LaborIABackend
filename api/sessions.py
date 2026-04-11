@@ -6,6 +6,7 @@ from core.jwt import get_current_user
 from exceptions.interview_session_exceptions import InterviewSessionNotFoundError
 from schemas.interview_session import InterviewSessionDetailResponse, InterviewSessionResponse
 from services.interview_session_service import InterviewSessionService
+from services.interview_flow import resolve_session_created_snapshot
 
 
 router = APIRouter(
@@ -35,6 +36,17 @@ def create_session(
 
     service = InterviewSessionService(db)
     new_session = service.create_session(current_user["id"])
+
+    session_snapshot = resolve_session_created_snapshot(
+        session_id=new_session.id,
+        user_id=current_user["id"],
+    )
+    if session_snapshot is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Interview flow validation failed for session_created",
+        )
+
     response.status_code = status.HTTP_201_CREATED
     return InterviewSessionResponse.model_validate(new_session).model_dump(mode="json")
 

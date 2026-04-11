@@ -25,6 +25,14 @@ from core.jwt import get_current_user
 from models.evaluation import Evaluation, EvaluationStatus
 from models.question import Question
 from services.answer_evaluator import run_evaluation_background
+from services.interview_flow import (
+    EVENT_EVALUATION_PENDING,
+    EVALUATION_PENDING,
+    QUESTION_CREATED,
+    can_enter_evaluation_pending,
+    resolve_next_state,
+    state_from_evaluation_status,
+)
 
 router = APIRouter(
     prefix="/evaluations",
@@ -83,6 +91,19 @@ async def submit_answer(
         raise HTTPException(status_code=400, detail="question_id es requerido")
     if not user_answer:
         raise HTTPException(status_code=400, detail="user_answer_text no puede estar vacío")
+    if not can_enter_evaluation_pending(question_id=body.question_id, user_answer_text=user_answer):
+        raise HTTPException(status_code=400, detail="No se puede iniciar evaluacion para la pregunta enviada")
+    flow_target_state = resolve_next_state(
+        QUESTION_CREATED,
+        event=EVENT_EVALUATION_PENDING,
+        question_id=body.question_id,
+        user_answer_text=user_answer,
+    )
+    if flow_target_state != EVALUATION_PENDING:
+        raise HTTPException(
+            status_code=500,
+            detail="Interview flow transition is not allowed: question_created -> evaluation_pending",
+        )
 
     # Verificar que la pregunta existe
     question = db.query(Question).filter(Question.id == body.question_id).first()
@@ -103,6 +124,13 @@ async def submit_answer(
     db.add(evaluation)
     db.commit()
     db.refresh(evaluation)
+
+    evaluation_flow_state = state_from_evaluation_status(evaluation.status)
+    if evaluation_flow_state != EVALUATION_PENDING:
+        raise HTTPException(
+            status_code=500,
+            detail="Interview flow validation failed for evaluation_pending",
+        )
 
     # Disparar evaluación en background
     # La función run_evaluation_background es síncrona y gestiona su propio event loop.

@@ -43,6 +43,14 @@ from ai.azure_openai_client import AzureOpenAIClient
 from ai.azure_openai_service import AzureOpenAIService
 from core.database import SessionLocal
 from models.evaluation import Evaluation, EvaluationStatus
+from services.interview_flow import (
+    EVENT_EVALUATION_RESOLVED,
+    EVALUATION_COMPLETED,
+    EVALUATION_FAILED,
+    EVALUATION_PENDING,
+    resolve_next_state,
+    to_evaluation_status,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -230,11 +238,24 @@ def run_evaluation_background(
             "model_used":   _azure_service.deployment_name if _azure_service else None,
         }
 
-        if is_fallback:
-            update_data["status"]       = EvaluationStatus.FAILED
+        resolved_state = resolve_next_state(
+            EVALUATION_PENDING,
+            event=EVENT_EVALUATION_RESOLVED,
+            evaluation_status=EvaluationStatus.FAILED if is_fallback else EvaluationStatus.COMPLETED,
+            evaluation_id=evaluation_id,
+        )
+        if resolved_state is None:
+            raise RuntimeError("Interview flow could not resolve evaluation outcome state")
+
+        resolved_status = to_evaluation_status(resolved_state)
+        if resolved_status is None:
+            raise RuntimeError(f"Interview flow has no DB status mapping for state '{resolved_state}'")
+
+        update_data["status"] = resolved_status
+
+        if resolved_state == EVALUATION_FAILED:
             update_data["error_detail"] = "Azure OpenAI returned invalid or unparseable response"
-        else:
-            update_data["status"]          = EvaluationStatus.COMPLETED
+        elif resolved_state == EVALUATION_COMPLETED:
             update_data["score"]           = result["score"]
             update_data["feedback"]        = _format_feedback(result)
             update_data["score_breakdown"] = result["score_breakdown"]
@@ -251,8 +272,16 @@ def run_evaluation_background(
             evaluation_id, exc, exc_info=True,
         )
         try:
+            failed_state = resolve_next_state(
+                EVALUATION_PENDING,
+                event=EVENT_EVALUATION_RESOLVED,
+                evaluation_status=EvaluationStatus.FAILED,
+                evaluation_id=evaluation_id,
+            )
+            failed_status = to_evaluation_status(failed_state or EVALUATION_FAILED) or EvaluationStatus.FAILED
+
             db.query(Evaluation).filter(Evaluation.id == evaluation_id).update({
-                "status":       EvaluationStatus.FAILED,
+                "status":       failed_status,
                 "error_detail": str(exc)[:500],
             })
             db.commit()
