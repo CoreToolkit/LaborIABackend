@@ -73,3 +73,33 @@ async def transcribe_audio(
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         await file.close()
+
+
+@router.post("/transcribe/diarization")
+async def transcribe_audio_with_diarization(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+):
+    try:
+        if azure_speech_init_error:
+            raise HTTPException(status_code=503, detail=azure_speech_init_error)
+
+        audio_bytes = await file.read()
+        if not audio_bytes:
+            raise HTTPException(status_code=400, detail="'file' es requerido")
+
+        result = await run_in_threadpool(
+            azure_speech_client.transcribe_with_diarization,
+            audio_bytes,
+        )
+
+        if not isinstance(result, dict):
+            raise HTTPException(status_code=502, detail="Azure Speech no devolvio diarizacion valida")
+
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        await file.close()

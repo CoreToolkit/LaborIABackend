@@ -62,6 +62,22 @@ def test_azure_speech_client_delegates_to_service():
     ]
 
 
+def test_azure_speech_client_delegates_diarization_to_service():
+    calls = []
+
+    class DummyService:
+        def transcribe_with_diarization(self, audio_bytes):
+            calls.append({"audio_bytes": audio_bytes})
+            return {"text": "hola", "segments": [{"speaker": "speaker_1", "text": "hola"}]}
+
+    client = AzureSpeechClient(DummyService())
+
+    result = client.transcribe_with_diarization(b"audio-bytes")
+
+    assert result["text"] == "hola"
+    assert calls == [{"audio_bytes": b"audio-bytes"}]
+
+
 def test_azure_speech_service_returns_text_when_transcription_succeeds(monkeypatch):
     captured = {}
 
@@ -120,3 +136,71 @@ def test_azure_speech_service_requires_configuration(monkeypatch):
 
     with pytest.raises(RuntimeError, match="Faltan variables de entorno de Azure Speech: SPEECH_KEY, SPEECH_REGION"):
         AzureSpeechService()
+
+
+def test_transcribe_with_diarization_falls_back_to_single_speaker(monkeypatch):
+    monkeypatch.setattr(azure_speech_service_module, "speechsdk", _FakeSpeechSdk)
+    monkeypatch.setattr(
+        AzureSpeechService,
+        "transcribe_audio",
+        lambda self, audio_bytes, filename=None, language=None: "texto fallback",
+    )
+
+    service = AzureSpeechService(speech_key="key", speech_region="region")
+
+    result = service.transcribe_with_diarization(b"fake audio bytes")
+
+    assert result["text"] == "texto fallback"
+    assert result["segments"] == [{"speaker": "speaker_1", "text": "texto fallback"}]
+
+
+def test_transcribe_with_diarization_returns_speaker_segments(monkeypatch):
+    class Signal:
+        def __init__(self):
+            self.handlers = []
+
+        def connect(self, handler):
+            self.handlers.append(handler)
+
+        def emit(self, evt):
+            for handler in self.handlers:
+                handler(evt)
+
+    class DummyTranscriber:
+        def __init__(self):
+            self.transcribed = Signal()
+            self.session_stopped = Signal()
+            self.canceled = Signal()
+
+        def start_transcribing_async(self):
+            def _run():
+                self.transcribed.emit(
+                    SimpleNamespace(result=SimpleNamespace(text="hola", speaker_id=1))
+                )
+                self.transcribed.emit(
+                    SimpleNamespace(result=SimpleNamespace(text="mundo", speaker_id=2))
+                )
+                self.session_stopped.emit(SimpleNamespace())
+                return None
+
+            return SimpleNamespace(get=_run)
+
+        def stop_transcribing_async(self):
+            return SimpleNamespace(get=lambda: None)
+
+    monkeypatch.setattr(azure_speech_service_module, "speechsdk", _FakeSpeechSdk)
+    monkeypatch.setattr(
+        AzureSpeechService,
+        "create_conversation_transcriber",
+        lambda self, audio_config: DummyTranscriber(),
+    )
+
+    service = AzureSpeechService(speech_key="key", speech_region="region")
+
+    result = service.transcribe_with_diarization(b"fake audio bytes")
+
+    assert result["text"] == "hola mundo"
+    assert result["segments"] == [
+        {"speaker": "speaker_1", "text": "hola"},
+        {"speaker": "speaker_2", "text": "mundo"},
+    ]
