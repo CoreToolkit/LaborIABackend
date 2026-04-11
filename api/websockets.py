@@ -27,12 +27,17 @@ async def websocket_endpoint(websocket: WebSocket, session_code: str, user_id: s
         return
 
     db = SessionLocal()
+    room_id: str | None = None
+    interview_session_id: int | None = None
     try:
         group_service = GroupInterviewSessionService(db)
         group_session, interview_session = group_service.join_group_session(
             session_code=session_code,
             user_id=parsed_user_id,
         )
+        # Extraer valores primitivos antes de cerrar sesión para evitar acceso a ORM detached.
+        room_id = group_session.session_code
+        interview_session_id = interview_session.id
     except InterviewSessionNotFoundError:
         await websocket.close(code=1008, reason="group_session_not_found")
         return
@@ -45,7 +50,10 @@ async def websocket_endpoint(websocket: WebSocket, session_code: str, user_id: s
     finally:
         db.close()
 
-    room_id = group_session.session_code
+    if not room_id or interview_session_id is None:
+        await websocket.close(code=1011, reason="invalid_join_state")
+        return
+
     await manager.connect(websocket, room_id, user_id)
 
     await manager.broadcast_text(
@@ -53,7 +61,7 @@ async def websocket_endpoint(websocket: WebSocket, session_code: str, user_id: s
             "event": "user_joined",
             "user_id": user_id,
             "session_code": room_id,
-            "interview_session_id": interview_session.id,
+            "interview_session_id": interview_session_id,
         }), room_id, sender_id=user_id
     )
     try:

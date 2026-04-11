@@ -105,7 +105,19 @@ def get_group_session_by_code(
         ) from exc
     
     response.status_code = status.HTTP_200_OK
-    return GroupInterviewSessionDetailSchema.model_validate(session).model_dump(mode="json")
+    detail_payload = {
+        "id": session.id,
+        "session_code": session.session_code,
+        "host_id": session.host_id,
+        "host": session.host,
+        "role_id": session.role_id,
+        "role": session.role,
+        "difficulty": session.difficulty,
+        "created_at": session.created_at,
+        "updated_at": session.updated_at,
+        "participant_count": len(session.interview_sessions or []),
+    }
+    return GroupInterviewSessionDetailSchema.model_validate(detail_payload).model_dump(mode="json")
 
 
 @router.delete("/{group_session_id}")

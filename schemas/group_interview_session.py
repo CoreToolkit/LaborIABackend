@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class GroupInterviewSessionCreateSchema(BaseModel):
@@ -54,12 +54,7 @@ class GroupInterviewSessionDetailSchema(BaseModel):
     difficulty: str | None
     created_at: datetime | None
     updated_at: datetime | None
-    interview_sessions: list | None = Field(default_factory=list, description="Lista de sesiones de entrevista participantes")
-
-    @computed_field
-    @property
-    def participant_count(self) -> int:
-        """Contar el número de participantes (interview_sessions vinculadas)."""
-        if self.interview_sessions:
-            return len(self.interview_sessions)
-        return 0
+    participant_count: int = Field(
+        default=0,
+        description="Número de sesiones de entrevista vinculadas a la sesión grupal"
+    )
