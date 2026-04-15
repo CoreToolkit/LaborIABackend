@@ -18,7 +18,7 @@ class AzureOpenAIService:
         self.api_key = api_key or os.getenv("AZURE_OPENAI_API_KEY")
         self.api_version = api_version or os.getenv("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
         self.deployment_name = deployment_name or os.getenv("AZURE_OPENAI_DEPLOYMENT")
-        self.timeout = timeout or int(os.getenv("AZURE_OPENAI_TIMEOUT", "60"))
+        self.timeout = timeout if timeout is not None else int(os.getenv("AZURE_OPENAI_TIMEOUT", "60"))
 
         missing = []
         if not self.endpoint:
@@ -28,18 +28,31 @@ class AzureOpenAIService:
         if not self.deployment_name:
             missing.append("AZURE_OPENAI_DEPLOYMENT")
 
-        if missing:
-            raise RuntimeError(f"Faltan variables de entorno de Azure OpenAI: {', '.join(missing)}")
+        self.missing_config = missing
+        self.configured = not missing
 
-        self.client = AsyncAzureOpenAI(
-            azure_endpoint=self.endpoint,
-            api_key=self.api_key,
-            api_version=self.api_version,
-            timeout=self.timeout,
+        self.client = (
+            AsyncAzureOpenAI(
+                azure_endpoint=self.endpoint,
+                api_key=self.api_key,
+                api_version=self.api_version,
+                timeout=self.timeout,
+            )
+            if self.configured
+            else None
         )
+
+    def _require_configuration(self) -> None:
+        if self.configured:
+            return
+
+        raise RuntimeError(f"Faltan variables de entorno de Azure OpenAI: {', '.join(self.missing_config)}")
 
     async def health_check(self) -> bool:
         """Verifica conectividad con Azure OpenAI mediante una llamada minima."""
+        if not self.configured:
+            return False
+
         try:
             response = await self.client.chat.completions.create(
                 model=self.deployment_name,
@@ -60,6 +73,8 @@ class AzureOpenAIService:
         max_tokens: int = 256,
         top_p: float = None,
     ) -> str:
+        self._require_configuration()
+
         kwargs = {
             "model": self.deployment_name,
             "messages": [

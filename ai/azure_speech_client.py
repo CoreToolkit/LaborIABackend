@@ -19,3 +19,6 @@ class AzureSpeechClient:
             filename=filename,
             language=language,
         )
+
+    def transcribe_with_diarization(self, audio_bytes: bytes) -> dict:
+        return self.service.transcribe_with_diarization(audio_bytes=audio_bytes)
