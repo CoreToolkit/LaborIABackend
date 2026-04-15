@@ -121,6 +121,70 @@ def get_group_session_by_code(
     return GroupInterviewSessionDetailSchema.model_validate(detail_payload).model_dump(mode="json")
 
 
+@router.post("/{session_code}/start")
+def start_group_session(
+    session_code: str,
+    response: Response,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Iniciar una sesión grupal (solo el host y en estado waiting)."""
+    service = GroupInterviewSessionService(db)
+
+    try:
+        session = service.start_group_session(session_code, current_user["id"])
+    except InterviewSessionNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=exc.message,
+        ) from exc
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+
+    response.status_code = status.HTTP_200_OK
+    return GroupInterviewSessionResponseSchema.model_validate(session).model_dump(mode="json")
+
+
+@router.post("/{session_code}/close")
+def close_group_session(
+    session_code: str,
+    response: Response,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Cerrar una sesión grupal (solo el host y en estado in_progress)."""
+    service = GroupInterviewSessionService(db)
+
+    try:
+        session = service.close_group_session(session_code, current_user["id"])
+    except InterviewSessionNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=exc.message,
+        ) from exc
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+
+    response.status_code = status.HTTP_200_OK
+    return GroupInterviewSessionResponseSchema.model_validate(session).model_dump(mode="json")
+
+
 @router.delete("/{group_session_id}")
 def delete_group_session(
     group_session_id: int,

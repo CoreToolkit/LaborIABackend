@@ -357,3 +357,164 @@ def test_delete_group_session_not_host():
 
     assert delete_response.status_code == 403
     assert "Solo el host" in delete_response.json()["detail"]
+
+
+def test_start_group_session_as_host():
+    user = _create_user()
+    role = _create_role()
+    auth_headers = _auth_headers_for_user(user)
+
+    create_response = client.post(
+        "/api/group-sessions",
+        json={
+            "role_id": str(role.id),
+            "difficulty": "intermediate",
+        },
+        headers=auth_headers,
+    )
+    session_code = create_response.json()["session_code"]
+
+    start_response = client.post(
+        f"/api/group-sessions/{session_code}/start",
+        headers=auth_headers,
+    )
+
+    assert start_response.status_code == 200
+    assert start_response.json()["status"] == "in_progress"
+
+
+def test_start_group_session_not_host_returns_403():
+    host = _create_user()
+    other_user = _create_user()
+    role = _create_role()
+    host_headers = _auth_headers_for_user(host)
+    other_headers = _auth_headers_for_user(other_user)
+
+    create_response = client.post(
+        "/api/group-sessions",
+        json={
+            "role_id": str(role.id),
+            "difficulty": "intermediate",
+        },
+        headers=host_headers,
+    )
+    session_code = create_response.json()["session_code"]
+
+    start_response = client.post(
+        f"/api/group-sessions/{session_code}/start",
+        headers=other_headers,
+    )
+
+    assert start_response.status_code == 403
+    assert "Solo el host" in start_response.json()["detail"]
+
+
+def test_start_group_session_already_started_returns_409():
+    user = _create_user()
+    role = _create_role()
+    auth_headers = _auth_headers_for_user(user)
+
+    create_response = client.post(
+        "/api/group-sessions",
+        json={
+            "role_id": str(role.id),
+            "difficulty": "intermediate",
+        },
+        headers=auth_headers,
+    )
+    session_code = create_response.json()["session_code"]
+
+    first_start = client.post(
+        f"/api/group-sessions/{session_code}/start",
+        headers=auth_headers,
+    )
+    assert first_start.status_code == 200
+
+    second_start = client.post(
+        f"/api/group-sessions/{session_code}/start",
+        headers=auth_headers,
+    )
+    assert second_start.status_code == 409
+
+
+def test_close_group_session_as_host():
+    user = _create_user()
+    role = _create_role()
+    auth_headers = _auth_headers_for_user(user)
+
+    create_response = client.post(
+        "/api/group-sessions",
+        json={
+            "role_id": str(role.id),
+            "difficulty": "intermediate",
+        },
+        headers=auth_headers,
+    )
+    session_code = create_response.json()["session_code"]
+
+    client.post(
+        f"/api/group-sessions/{session_code}/start",
+        headers=auth_headers,
+    )
+
+    close_response = client.post(
+        f"/api/group-sessions/{session_code}/close",
+        headers=auth_headers,
+    )
+
+    assert close_response.status_code == 200
+    assert close_response.json()["status"] == "closed"
+
+
+def test_close_group_session_not_host_returns_403():
+    host = _create_user()
+    other_user = _create_user()
+    role = _create_role()
+    host_headers = _auth_headers_for_user(host)
+    other_headers = _auth_headers_for_user(other_user)
+
+    create_response = client.post(
+        "/api/group-sessions",
+        json={
+            "role_id": str(role.id),
+            "difficulty": "intermediate",
+        },
+        headers=host_headers,
+    )
+    session_code = create_response.json()["session_code"]
+
+    client.post(
+        f"/api/group-sessions/{session_code}/start",
+        headers=host_headers,
+    )
+
+    close_response = client.post(
+        f"/api/group-sessions/{session_code}/close",
+        headers=other_headers,
+    )
+
+    assert close_response.status_code == 403
+    assert "Solo el host" in close_response.json()["detail"]
+
+
+def test_close_group_session_when_waiting_returns_409():
+    user = _create_user()
+    role = _create_role()
+    auth_headers = _auth_headers_for_user(user)
+
+    create_response = client.post(
+        "/api/group-sessions",
+        json={
+            "role_id": str(role.id),
+            "difficulty": "intermediate",
+        },
+        headers=auth_headers,
+    )
+    session_code = create_response.json()["session_code"]
+
+    close_response = client.post(
+        f"/api/group-sessions/{session_code}/close",
+        headers=auth_headers,
+    )
+
+    assert close_response.status_code == 409

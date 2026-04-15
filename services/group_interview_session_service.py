@@ -82,6 +82,40 @@ class GroupInterviewSessionService:
         """Listar sesiones grupales activas disponibles para unirse."""
         return self.repo.list_active(limit=limit)
 
+    def start_group_session(self, session_code: str, requester_id: int):
+        """Iniciar una sesión grupal (solo host, estado waiting)."""
+        group_session = self.get_group_session_by_code(session_code)
+
+        if group_session.host_id != requester_id:
+            raise PermissionError("Solo el host puede iniciar la sesión grupal")
+
+        if group_session.status != "waiting":
+            raise ValueError(
+                "La sesión grupal solo puede iniciarse cuando está en estado 'waiting'"
+            )
+
+        group_session.status = "in_progress"
+        self.db.commit()
+        self.db.refresh(group_session)
+        return group_session
+
+    def close_group_session(self, session_code: str, requester_id: int):
+        """Cerrar una sesión grupal (solo host, estado in_progress)."""
+        group_session = self.get_group_session_by_code(session_code)
+
+        if group_session.host_id != requester_id:
+            raise PermissionError("Solo el host puede cerrar la sesión grupal")
+
+        if group_session.status != "in_progress":
+            raise ValueError(
+                "La sesión grupal solo puede cerrarse cuando está en estado 'in_progress'"
+            )
+
+        group_session.status = "closed"
+        self.db.commit()
+        self.db.refresh(group_session)
+        return group_session
+
     def join_group_session(self, session_code: str, user_id: int):
         """
         Unir usuario a una sesión grupal y crear/reutilizar su InterviewSession individual.
