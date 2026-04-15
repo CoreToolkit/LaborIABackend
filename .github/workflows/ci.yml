@@ -2,10 +2,7 @@ name: CI and Deploy
 
 on:
   push:
-    branches: [main, develop, sentinel-smoke-test]
   pull_request:
-    branches: [main, develop, sentinel-smoke-test]
-
 
 jobs:
   ci:
@@ -13,99 +10,57 @@ jobs:
     env:
       DATABASE_URL: sqlite:///./test.db
       JWT_SECRET: ci-secret
-      OLLAMA_TIMEOUT: "120"
-      IMAGE_NAME: laboria-backend:${{ github.sha }}
-      GATE_URL: http://127.0.0.1:8000
-      SENTINEL_REPOSITORY: JuanDiegoRV/Sentinel-AI-CD
-      SENTINEL_REF: feature/Laboria_compatibility
     steps:
-      - name: Checkout backend
+      - name: Checkout
         uses: actions/checkout@v5
-
-      - name: Checkout Sentinel
-        uses: actions/checkout@v5
-        with:
-          repository: ${{ env.SENTINEL_REPOSITORY }}
-          ref: ${{ env.SENTINEL_REF }}
-          path: sentinel-ai-cd
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Prepare reports directory
-        run: mkdir -p reports
-
-      - name: Install backend dependencies
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Build backend image
-        run: docker build -t "$IMAGE_NAME" .
-
-      - name: Install Trivy
+      - name: Test with coverage (>=80%)
         run: |
+          python -m pytest --cov=. --cov-report=term-missing --cov-fail-under=80
+
+      - name: Checkout Sentinel
+        if: |
+          (github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'develop')) ||
+          (github.event_name == 'pull_request' && (github.base_ref == 'main' || github.base_ref == 'develop'))
+        uses: actions/checkout@v5
+        with:
+          repository: JuanDiegoRV/Sentinel-AI-CD
+          ref: feature/Laboria_compatibility
+          path: sentinel-ai-cd
+
+      - name: Build backend image for Sentinel scan
+        if: |
+          (github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'develop')) ||
+          (github.event_name == 'pull_request' && (github.base_ref == 'main' || github.base_ref == 'develop'))
+        run: docker build -t laboria-backend:${{ github.sha }} .
+
+      - name: Install Trivy + Sentinel dependencies
+        if: |
+          (github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'develop')) ||
+          (github.event_name == 'pull_request' && (github.base_ref == 'main' || github.base_ref == 'develop'))
+        run: |
+          mkdir -p reports
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
-          trivy --version
-
-      - name: Run Trivy image scan
-        run: |
-          trivy image \
-            --format json \
-            --output reports/trivy-image.json \
-            --severity CRITICAL,HIGH,MEDIUM \
-            --ignore-unfixed \
-            --exit-code 0 \
-            "$IMAGE_NAME"
-
-      - name: Summarize Trivy findings
-        run: |
-          python - <<'PY'
-          import json
-          from collections import Counter
-
-          with open("reports/trivy-image.json", "r", encoding="utf-8") as f:
-              data = json.load(f)
-
-          counter = Counter()
-          critical_rows = []
-          high_rows = []
-          for result in data.get("Results", []):
-              target = result.get("Target", "unknown")
-              for vuln in result.get("Vulnerabilities") or []:
-                  sev = (vuln.get("Severity") or "UNKNOWN").upper()
-                  counter[sev] += 1
-                  row = (
-                      target,
-                      vuln.get("PkgName", "unknown"),
-                      vuln.get("InstalledVersion", "unknown"),
-                      vuln.get("FixedVersion", "unknown"),
-                      vuln.get("VulnerabilityID", "unknown"),
-                  )
-                  if sev == "CRITICAL":
-                      critical_rows.append(row)
-                  elif sev == "HIGH":
-                      high_rows.append(row)
-
-          print("Trivy severity summary:", dict(counter))
-          if critical_rows:
-              print("Critical findings:")
-              for row in critical_rows:
-                  print(" - target=%s pkg=%s installed=%s fixed=%s cve=%s" % row)
-          if high_rows:
-              print("High findings (top 20):")
-              for row in high_rows[:20]:
-                  print(" - target=%s pkg=%s installed=%s fixed=%s cve=%s" % row)
-          PY
-
-      - name: Install Sentinel dependencies
-        run: |
           python -m pip install --upgrade pip
           pip install -r sentinel-ai-cd/requirements.txt
 
-      - name: Start Sentinel and evaluate image
+      - name: Run Sentinel gate
+        if: |
+          (github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'develop')) ||
+          (github.event_name == 'pull_request' && (github.base_ref == 'main' || github.base_ref == 'develop'))
+        env:
+          IMAGE_NAME: laboria-backend:${{ github.sha }}
+          GATE_URL: http://127.0.0.1:8000
         run: |
           export AI_DISABLED=true
           python -m uvicorn --app-dir sentinel-ai-cd/app main:app --host 127.0.0.1 --port 8000 > reports/sentinel.log 2>&1 &
@@ -113,52 +68,103 @@ jobs:
           trap 'kill $sentinel_pid >/dev/null 2>&1 || true' EXIT
 
           for attempt in 1 2 3 4 5 6 7 8 9 10; do
-            if curl -fsS "${GATE_URL}/health" > /dev/null; then
+            if curl -fsS "${GATE_URL}/health" > /dev/null 2>&1; then
               break
             fi
             sleep 2
           done
 
-          if ! curl -fsS "${GATE_URL}/health" > /dev/null; then
+          if ! curl -fsS "${GATE_URL}/health" > /dev/null 2>&1; then
             echo "Sentinel gate did not become healthy in time" >&2
             cat reports/sentinel.log || true
             exit 1
           fi
+
+          trivy image \
+            --format json \
+            --output reports/trivy-image.json \
+            --severity CRITICAL,HIGH,MEDIUM,LOW \
+            --ignore-unfixed \
+            --exit-code 0 \
+            "$IMAGE_NAME"
+
+          python - <<'PY'
+          import json
+          import os
+          from collections import Counter
+
+          with open("reports/trivy-image.json", "r", encoding="utf-8") as f:
+              data = json.load(f)
+
+          counts = Counter()
+          for result in data.get("Results", []):
+              for vuln in result.get("Vulnerabilities") or []:
+                  sev = (vuln.get("Severity") or "UNKNOWN").upper()
+                  counts[sev] += 1
+
+          critical = counts.get("CRITICAL", 0)
+          high = counts.get("HIGH", 0)
+          medium = counts.get("MEDIUM", 0)
+          low = counts.get("LOW", 0)
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as s:
+              s.write("## Trivy Vulnerability Summary\n")
+              s.write(f"- Critical: `{critical}`\n")
+              s.write(f"- High: `{high}`\n")
+              s.write(f"- Medium: `{medium}`\n")
+              s.write(f"- Low: `{low}`\n")
+              if critical > 0 or high > 0:
+                  s.write("- Improvement: Priorizar remediacion de dependencias/imagen con severidad alta y critica.\n")
+          PY
 
           set +e
           python sentinel-ai-cd/pipeline/trivy_to_gate.py \
             --report reports/trivy-image.json \
             --image "$IMAGE_NAME" \
             --gate "$GATE_URL" \
-            --dockerfile ./Dockerfile
+            --dockerfile ./Dockerfile > reports/sentinel-gate.log 2>&1
           gate_exit=$?
           set -e
 
-          echo "gate_exit=$gate_exit" >> "$GITHUB_OUTPUT"
-          cat reports/sentinel.log || true
-
-          if [ "$gate_exit" -eq 1 ]; then
-            echo "Sentinel rejected the image. Blocking deploy."
-            exit 1
+          cat reports/sentinel-gate.log || true
+          decision=$(grep -E "GATE DECISION:" reports/sentinel-gate.log | tail -n 1 | sed -E 's/.*GATE DECISION:[[:space:]]*([A-Z_]+).*/\1/' || true)
+          if [ -z "$decision" ]; then
+            decision="UNKNOWN"
           fi
 
-          if [ "$gate_exit" -eq 3 ]; then
-            echo "Sentinel gate failed technically."
-            exit 3
+          {
+            echo "## Sentinel Gate Result"
+            echo "- Gate URL: \`$GATE_URL\` (servicio local dentro del runner de GitHub Actions)"
+            echo "- Decision: \`$decision\`"
+            echo "- Exit code: \`$gate_exit\`"
+            echo "- Meaning:"
+            echo "  - \`ALLOW\` o \`PASS\`: imagen permitida, CI continua."
+            echo "  - \`WARNING\`: imagen permitida con riesgo, se recomienda remediacion."
+            echo "  - \`BLOCK\`/no-cero: imagen bloqueada o error tecnico, CI falla."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$gate_exit" -ne 0 ]; then
+            echo "Sentinel blocked the image or failed technically (exit ${gate_exit})." >&2
+            exit "$gate_exit"
           fi
 
-          exit 0
-        id: sentinel_gate
-
-      - name: Upload CI artifacts
-        if: always()
+      - name: Upload Sentinel artifacts
+        if: |
+          always() && (
+            (github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'develop')) ||
+            (github.event_name == 'pull_request' && (github.base_ref == 'main' || github.base_ref == 'develop'))
+          )
         uses: actions/upload-artifact@v4
         with:
           name: sentinel-artifacts
-          path: reports/
+          path: |
+            reports/trivy-image.json
+            reports/sentinel.log
+            reports/sentinel-gate.log
 
       - name: Deploy to Render
-        if: github.ref == 'refs/heads/main' && success()
+        if: github.event_name == 'push' && github.ref_name == 'main' && success()
         env:
           deploy_url: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
-        run: curl -X POST "$deploy_url"
+        run: |
+          curl -X POST "$deploy_url"

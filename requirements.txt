@@ -9,6 +9,7 @@ httptools==0.7.1
 idna==3.11
 pydantic==2.12.5
 pydantic_core==2.41.5
+langgraph==0.2.67
 python-dotenv==1.2.1
 PyYAML==6.0.3
 starlette==0.52.1
@@ -22,7 +23,7 @@ httpx==0.27.0
 pytest-cov==7.0.0
 authlib==1.6.9
 itsdangerous==2.1.2
-python-jose[cryptography]==3.4.0
+python-jose[cryptography]==3.3.0
 sqlalchemy==2.0.32
 psycopg2-binary==2.9.11
 alembic==1.18.0

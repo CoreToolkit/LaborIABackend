@@ -7,48 +7,39 @@ from pathlib import Path
 def run_command(command, step_name):
     print(f"\n--- {step_name} ---")
 
-    result = subprocess.run(command, check=False)
+    result = subprocess.run(command, shell=True)
 
     if result.returncode != 0:
-        print(f"\n❌ Error en: {step_name}")
+        print(f"\nError en: {step_name}")
         sys.exit(result.returncode)
 
-    print(f"✅ {step_name} completado")
+    print(f"{step_name} completado")
 
 
 def install():
     run_command(
-        [sys.executable, "-m", "pip", "install", "-r", "requirements.txt"],
+        "pip install -r requirements.txt",
         "Instalando dependencias"
     )
 
 
 def test():
     run_command(
-        [sys.executable, "-m", "pytest"],
+        f"{sys.executable} -m pytest",
         "Ejecutando tests"
     )
 
 
 def coverage():
     run_command(
-        [
-            sys.executable,
-            "-m",
-            "pytest",
-            "--cov",
-            "--cov-branch",
-            "--cov-report=term-missing",
-            "--cov-report=html",
-            "--cov-fail-under=80",
-        ],
+        f"{sys.executable} -m pytest --cov --cov-branch --cov-report=term-missing --cov-report=html --cov-fail-under=80",
         "Calculando coverage"
     )
 
 
 def run():
     run_command(
-        [sys.executable, "-m", "uvicorn", "main:app", "--reload"],
+        f"{sys.executable} -m uvicorn main:app --reload",
         "Levantando API"
     )
 
@@ -57,21 +48,21 @@ def clean():
     print("\n--- Limpiando proyecto ---")
 
     folders = ["__pycache__", ".pytest_cache", "htmlcov"]
-    files = [".coverage", "test.db"]
+    files = [".coverage"]
 
     for folder in folders:
         path = Path(folder)
         if path.exists():
             shutil.rmtree(path)
-            print(f"🧹 Eliminado {folder}")
+            print(f"Eliminado {folder}")
 
     for file in files:
         path = Path(file)
         if path.exists():
             path.unlink()
-            print(f"🧹 Eliminado {file}")
+            print(f"Eliminado {file}")
 
-    print("✅ Limpieza completada")
+    print("Limpieza completada")
 
 
 def all():
@@ -101,7 +92,7 @@ def main():
     command = sys.argv[1]
 
     if command not in commands:
-        print(f"\n❌ Comando desconocido: {command}")
+        print(f"\nComando desconocido: {command}")
         sys.exit(1)
 
     commands[command]()
