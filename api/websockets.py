@@ -1,7 +1,7 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 #from fastapi import APIRouter, Depends, HTTPException, Response, status
 #from sqlalchemy.orm import Session
-from services.websocket_service import ConnectionManager
+from services.websocket_service import manager
 from services.group_interview_session_service import GroupInterviewSessionService
 from exceptions.interview_session_exceptions import InterviewSessionNotFoundError
 from core.database import SessionLocal
@@ -15,8 +15,6 @@ router = APIRouter(
     prefix="/ws", 
     tags=["WebSockets"]
     )
-
-manager = ConnectionManager()
 
 @router.websocket("/{session_code}/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, session_code: str, user_id: str):

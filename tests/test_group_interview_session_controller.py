@@ -1,4 +1,5 @@
 import os
+import json
 import uuid
 from pathlib import Path
 
@@ -383,6 +384,43 @@ def test_start_group_session_as_host():
     assert start_response.json()["status"] == "in_progress"
 
 
+def test_start_group_session_emits_interview_started_event(monkeypatch):
+    emitted: list[tuple[str, str]] = []
+
+    async def _fake_broadcast_text(message: str, room_id: str, sender_id: str = ""):
+        emitted.append((message, room_id))
+
+    monkeypatch.setattr(group_sessions_module.manager, "broadcast_text", _fake_broadcast_text)
+
+    user = _create_user()
+    role = _create_role()
+    auth_headers = _auth_headers_for_user(user)
+
+    create_response = client.post(
+        "/api/group-sessions",
+        json={
+            "role_id": str(role.id),
+            "difficulty": "intermediate",
+        },
+        headers=auth_headers,
+    )
+    session_code = create_response.json()["session_code"]
+
+    start_response = client.post(
+        f"/api/group-sessions/{session_code}/start",
+        headers=auth_headers,
+    )
+
+    assert start_response.status_code == 200
+    assert len(emitted) == 1
+    message, room_id = emitted[0]
+    payload = json.loads(message)
+    assert room_id == session_code
+    assert payload["event"] == "interview_started"
+    assert payload["session_code"] == session_code
+    assert payload["status"] == "in_progress"
+
+
 def test_start_group_session_not_host_returns_403():
     host = _create_user()
     other_user = _create_user()
@@ -464,6 +502,49 @@ def test_close_group_session_as_host():
 
     assert close_response.status_code == 200
     assert close_response.json()["status"] == "closed"
+
+
+def test_close_group_session_emits_interview_closed_event(monkeypatch):
+    emitted: list[tuple[str, str]] = []
+
+    async def _fake_broadcast_text(message: str, room_id: str, sender_id: str = ""):
+        emitted.append((message, room_id))
+
+    monkeypatch.setattr(group_sessions_module.manager, "broadcast_text", _fake_broadcast_text)
+
+    user = _create_user()
+    role = _create_role()
+    auth_headers = _auth_headers_for_user(user)
+
+    create_response = client.post(
+        "/api/group-sessions",
+        json={
+            "role_id": str(role.id),
+            "difficulty": "intermediate",
+        },
+        headers=auth_headers,
+    )
+    session_code = create_response.json()["session_code"]
+
+    start_response = client.post(
+        f"/api/group-sessions/{session_code}/start",
+        headers=auth_headers,
+    )
+    assert start_response.status_code == 200
+
+    close_response = client.post(
+        f"/api/group-sessions/{session_code}/close",
+        headers=auth_headers,
+    )
+
+    assert close_response.status_code == 200
+    assert len(emitted) == 2
+    message, room_id = emitted[1]
+    payload = json.loads(message)
+    assert room_id == session_code
+    assert payload["event"] == "interview_closed"
+    assert payload["session_code"] == session_code
+    assert payload["status"] == "closed"
 
 
 def test_close_group_session_not_host_returns_403():

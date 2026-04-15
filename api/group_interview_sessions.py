@@ -1,3 +1,7 @@
+import json
+import logging
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
@@ -10,12 +14,31 @@ from schemas.group_interview_session import (
     GroupInterviewSessionResponseSchema,
 )
 from services.group_interview_session_service import GroupInterviewSessionService
+from services.websocket_service import manager
 
 
 router = APIRouter(
     prefix="/group-sessions",
     tags=["Group Interview Sessions"],
 )
+
+logger = logging.getLogger(__name__)
+
+
+def _session_timestamp(session) -> str:
+    if session.updated_at:
+        return session.updated_at.astimezone(timezone.utc).isoformat()
+    return datetime.now(timezone.utc).isoformat()
+
+
+async def _broadcast_group_event(session_code: str, event_payload: dict):
+    try:
+        await manager.broadcast_text(
+            json.dumps(event_payload),
+            session_code,
+        )
+    except Exception:
+        logger.exception("Failed broadcasting event for group session %s", session_code)
 
 
 @router.post("")
@@ -122,7 +145,7 @@ def get_group_session_by_code(
 
 
 @router.post("/{session_code}/start")
-def start_group_session(
+async def start_group_session(
     session_code: str,
     response: Response,
     db: Session = Depends(get_db),
@@ -149,12 +172,23 @@ def start_group_session(
             detail=str(exc),
         ) from exc
 
+    await _broadcast_group_event(
+        session.session_code,
+        {
+            "event": "interview_started",
+            "session_code": session.session_code,
+            "status": session.status,
+            "started_by": current_user["id"],
+            "started_at": _session_timestamp(session),
+        },
+    )
+
     response.status_code = status.HTTP_200_OK
     return GroupInterviewSessionResponseSchema.model_validate(session).model_dump(mode="json")
 
 
 @router.post("/{session_code}/close")
-def close_group_session(
+async def close_group_session(
     session_code: str,
     response: Response,
     db: Session = Depends(get_db),
@@ -180,6 +214,17 @@ def close_group_session(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
+
+    await _broadcast_group_event(
+        session.session_code,
+        {
+            "event": "interview_closed",
+            "session_code": session.session_code,
+            "status": session.status,
+            "closed_by": current_user["id"],
+            "closed_at": _session_timestamp(session),
+        },
+    )
 
     response.status_code = status.HTTP_200_OK
     return GroupInterviewSessionResponseSchema.model_validate(session).model_dump(mode="json")

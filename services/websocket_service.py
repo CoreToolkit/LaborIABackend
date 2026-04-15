@@ -37,3 +37,7 @@ class ConnectionManager:
         for user_id, connection in self.rooms[room_id]:
             if user_id != sender_id:
                 await connection.send_text(message)
+
+
+# Shared manager instance for all WebSocket-related routers/services.
+manager = ConnectionManager()
