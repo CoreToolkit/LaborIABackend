@@ -105,3 +105,21 @@ def test_join_group_session_invalid_code_raises_not_found():
             service.join_group_session(session_code="ZZZZ0000", user_id=user.id)
     finally:
         db.close()
+
+
+def test_create_group_session_defaults_to_waiting_status():
+    db = TestSessionLocal()
+    try:
+        user = _create_user(db)
+        role = _create_role(db)
+        service = GroupInterviewSessionService(db)
+
+        group_session = service.create_group_session(
+            host_id=user.id,
+            role_id=str(role.id),
+            difficulty="beginner",
+        )
+
+        assert group_session.status == "waiting"
+    finally:
+        db.close()

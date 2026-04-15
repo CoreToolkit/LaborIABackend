@@ -21,6 +21,7 @@ class GroupInterviewSessionResponseSchema(BaseModel):
     host_id: int
     role_id: UUID
     difficulty: str | None
+    status: str
     created_at: datetime | None
     updated_at: datetime | None
 
@@ -52,6 +53,7 @@ class GroupInterviewSessionDetailSchema(BaseModel):
     role_id: UUID
     role: GroupSessionRoleResponse | None
     difficulty: str | None
+    status: str
     created_at: datetime | None
     updated_at: datetime | None
     participant_count: int = Field(

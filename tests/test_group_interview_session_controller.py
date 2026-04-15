@@ -128,6 +128,7 @@ def test_create_group_session_authenticated():
     assert data["host_id"] == user.id
     assert data["role_id"] == str(role.id)
     assert data["difficulty"] == "intermediate"
+    assert data["status"] == "waiting"
 
 
 def test_create_group_session_generates_unique_codes():
@@ -198,6 +199,7 @@ def test_get_group_session_by_code():
     assert data["host_id"] == user.id
     assert data["host"]["email"] == user.email
     assert data["role"]["id"] == str(role.id)
+    assert data["status"] == "waiting"
 
 
 def test_get_group_session_invalid_code():

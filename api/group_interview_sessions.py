@@ -113,6 +113,7 @@ def get_group_session_by_code(
         "role_id": session.role_id,
         "role": session.role,
         "difficulty": session.difficulty,
+        "status": session.status,
         "created_at": session.created_at,
         "updated_at": session.updated_at,
         "participant_count": len(session.interview_sessions or []),

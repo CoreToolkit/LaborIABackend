@@ -9,11 +9,16 @@ from models.job_role import GUID
 class GroupInterviewSession(Base):
     __tablename__ = "group_interview_sessions"
 
+    STATUS_WAITING = "waiting"
+    STATUS_IN_PROGRESS = "in_progress"
+    STATUS_CLOSED = "closed"
+
     id = Column(Integer, primary_key=True, index=True)
     session_code = Column(String, nullable=False, unique=True, index=True)
     host_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     role_id = Column(GUID(), ForeignKey("job_roles.id"), nullable=False, index=True)
     difficulty = Column(String, nullable=True)
+    status = Column(String, nullable=False, server_default=STATUS_WAITING)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
 
