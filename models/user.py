@@ -17,4 +17,6 @@ class User(Base):
 
     # Relationship 1-1
     profile = relationship("Profile", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    interview_sessions = relationship("InterviewSession", back_populates="user")
+    group_interview_sessions_hosted = relationship("GroupInterviewSession", back_populates="host")
     match_results = relationship("MatchResult", back_populates="user")
