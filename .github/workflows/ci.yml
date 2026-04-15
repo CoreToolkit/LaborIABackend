@@ -96,26 +96,75 @@ jobs:
           with open("reports/trivy-image.json", "r", encoding="utf-8") as f:
               data = json.load(f)
 
+          severity_rank = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "UNKNOWN": 4}
           counts = Counter()
+          unique = []
+          seen = set()
           for result in data.get("Results", []):
               for vuln in result.get("Vulnerabilities") or []:
                   sev = (vuln.get("Severity") or "UNKNOWN").upper()
+                  vid = vuln.get("VulnerabilityID") or "UNKNOWN"
+                  pkg = vuln.get("PkgName") or "UNKNOWN"
+                  installed = vuln.get("InstalledVersion") or "UNKNOWN"
+                  fixed = vuln.get("FixedVersion") or "N/A"
+                  status = (vuln.get("Status") or "unknown").lower()
+                  primary_url = vuln.get("PrimaryURL") or ""
+                  key = (vid, pkg, installed, fixed, sev, status)
+                  if key in seen:
+                      continue
+                  seen.add(key)
+                  unique.append(
+                      {
+                          "severity": sev,
+                          "vid": vid,
+                          "pkg": pkg,
+                          "installed": installed,
+                          "fixed": fixed,
+                          "status": status,
+                          "url": primary_url,
+                      }
+                  )
                   counts[sev] += 1
 
           critical = counts.get("CRITICAL", 0)
           high = counts.get("HIGH", 0)
           medium = counts.get("MEDIUM", 0)
           low = counts.get("LOW", 0)
+          blockers = [v for v in unique if v["severity"] in {"CRITICAL", "HIGH"}]
+          blockers.sort(key=lambda v: (severity_rank.get(v["severity"], 99), v["vid"], v["pkg"]))
 
-          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as s:
+          with open("reports/trivy-summary.env", "w", encoding="utf-8") as envf:
+              envf.write(f"TRIVY_CRITICAL={critical}\n")
+              envf.write(f"TRIVY_HIGH={high}\n")
+              envf.write(f"TRIVY_MEDIUM={medium}\n")
+              envf.write(f"TRIVY_LOW={low}\n")
+
+          with open("reports/trivy-readable-summary.md", "w", encoding="utf-8") as s:
               s.write("## Trivy Vulnerability Summary\n")
               s.write(f"- Critical: `{critical}`\n")
               s.write(f"- High: `{high}`\n")
               s.write(f"- Medium: `{medium}`\n")
               s.write(f"- Low: `{low}`\n")
-              if critical > 0 or high > 0:
-                  s.write("- Improvement: Priorizar remediacion de dependencias/imagen con severidad alta y critica.\n")
+              s.write(f"- Unique vulnerabilities (deduplicated): `{len(unique)}`\n")
+              if blockers:
+                  s.write("\n### Blockers (Critical/High)\n")
+                  s.write("| Severity | CVE/GHSA | Package | Installed | Fixed |\n")
+                  s.write("|---|---|---|---|---|\n")
+                  for v in blockers[:20]:
+                      vid = v["vid"]
+                      if v["url"]:
+                          vid = f"[{vid}]({v['url']})"
+                      s.write(
+                          f"| {v['severity']} | {vid} | `{v['pkg']}` | `{v['installed']}` | `{v['fixed']}` |\n"
+                      )
+                  if len(blockers) > 20:
+                      s.write(f"\n_...and {len(blockers) - 20} more blockers._\n")
+              else:
+                  s.write("\nNo Critical/High vulnerabilities found by Trivy.\n")
           PY
+
+          source reports/trivy-summary.env
+          cat reports/trivy-readable-summary.md >> "$GITHUB_STEP_SUMMARY"
 
           set +e
           python sentinel-ai-cd/pipeline/trivy_to_gate.py \
@@ -137,16 +186,36 @@ jobs:
             echo "- Gate URL: \`$GATE_URL\` (servicio local dentro del runner de GitHub Actions)"
             echo "- Decision: \`$decision\`"
             echo "- Exit code: \`$gate_exit\`"
+            echo "- Trivy counts seen by CI: Critical=\`${TRIVY_CRITICAL:-0}\`, High=\`${TRIVY_HIGH:-0}\`, Medium=\`${TRIVY_MEDIUM:-0}\`, Low=\`${TRIVY_LOW:-0}\`"
             echo "- Meaning:"
             echo "  - \`ALLOW\` o \`PASS\`: imagen permitida, CI continua."
-            echo "  - \`WARNING\`: imagen permitida con riesgo, se recomienda remediacion."
+            echo "  - \`WARNING\`: imagen permitida con riesgo, se recomienda remediacion (CI continua)."
             echo "  - \`BLOCK\`/no-cero: imagen bloqueada o error tecnico, CI falla."
           } >> "$GITHUB_STEP_SUMMARY"
 
-          if [ "$gate_exit" -ne 0 ]; then
-            echo "Sentinel blocked the image or failed technically (exit ${gate_exit})." >&2
-            exit "$gate_exit"
-          fi
+          # Sentinel can return non-zero for WARNING depending on implementation.
+          # We only fail the pipeline on blocking decisions or technical errors.
+          case "$decision" in
+            ALLOW|PASS)
+              if [ "$gate_exit" -ne 0 ]; then
+                echo "::error title=Sentinel gate inconsistent state::Decision=${decision} pero exit=${gate_exit}. Se considera error tecnico."
+                exit "$gate_exit"
+              fi
+              ;;
+            WARNING)
+              echo "::warning title=Sentinel gate warning::Decision=${decision}; Critical=${TRIVY_CRITICAL:-0}; High=${TRIVY_HIGH:-0}. CI continua, revisar remediacion."
+              ;;
+            BLOCK|DENY|REJECT)
+              echo "::error title=Sentinel gate blocked::Decision=${decision}; Critical=${TRIVY_CRITICAL:-0}; High=${TRIVY_HIGH:-0}. Revisa el 'Step Summary' para ver CVEs, paquete afectado y version fija."
+              exit "$gate_exit"
+              ;;
+            *)
+              if [ "$gate_exit" -ne 0 ]; then
+                echo "::error title=Sentinel gate error::Decision=${decision}; exit=${gate_exit}. Revisa sentinel-gate.log."
+                exit "$gate_exit"
+              fi
+              ;;
+          esac
 
       - name: Upload Sentinel artifacts
         if: |
@@ -159,6 +228,8 @@ jobs:
           name: sentinel-artifacts
           path: |
             reports/trivy-image.json
+            reports/trivy-readable-summary.md
+            reports/trivy-summary.env
             reports/sentinel.log
             reports/sentinel-gate.log
 
