@@ -9,6 +9,9 @@ from core.database import get_db
 from core.jwt import get_current_user
 from exceptions.interview_session_exceptions import InterviewSessionNotFoundError
 from exceptions.profile_exceptions import ProfileNotFoundError
+from models.interview_session import InterviewSession
+from models.question import Question
+from models.group_interview_round import GroupInterviewRound, GroupInterviewRoundStatus
 from schemas.group_interview_session import (
     GroupInterviewSessionCreateSchema,
     GroupInterviewSessionDetailSchema,
@@ -278,6 +281,33 @@ async def create_next_round(
             detail=str(exc),
         ) from exc
 
+    # Task-066-07: Persistir pregunta en tabla individual Question para cada InterviewSession
+    try:
+        interview_sessions = db.query(InterviewSession).filter(
+            InterviewSession.group_interview_session_id == group_session.id
+        ).all()
+        
+        questions_to_create = []
+        for iv_session in interview_sessions:
+            questions_to_create.append(
+                Question(
+                    interview_session_id=iv_session.id,
+                    question_text=round_item.question_text or "",
+                    category=round_item.target_skill,
+                    difficulty=round_item.difficulty,
+                    expected_topics=None,
+                    group_session_id=group_session.id,
+                    round_index=round_item.round_index,
+                )
+            )
+        
+        if questions_to_create:
+            db.add_all(questions_to_create)
+            db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.exception("Error creating Question records for session %s", group_session.id)
+
     emitted_at = datetime.now(timezone.utc).isoformat()
     await _broadcast_group_event(
         group_session.session_code,
@@ -292,7 +322,7 @@ async def create_next_round(
     await _broadcast_group_event(
         group_session.session_code,
         {
-            "event": "question_generated",
+            "event": "question_new",
             "session_code": group_session.session_code,
             "round_id": str(round_item.id),
             "round_index": round_item.round_index,
@@ -345,3 +375,69 @@ def delete_group_session(
     
     response.status_code = status.HTTP_204_NO_CONTENT
     return None
+
+
+@router.get("/{session_code}/state")
+def get_group_session_state(
+    session_code: str,
+    response: Response,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Task-066-08: Obtener estado completo de sesión para reconexión.
+    Retorna la ronda activa actual o la última ronda para que participante pueda continuar.
+    """
+    service = GroupInterviewSessionService(db)
+    
+    try:
+        session = service.get_group_session_by_code(session_code)
+    except InterviewSessionNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=exc.message
+        ) from exc
+    
+    # Obtener ronda activa, o la última si no hay activa
+    active_round = db.query(GroupInterviewRound).filter(
+        GroupInterviewRound.group_interview_session_id == session.id,
+        GroupInterviewRound.status == GroupInterviewRoundStatus.ACTIVE,
+    ).first()
+    
+    current_round_data = None
+    if active_round:
+        current_round_data = {
+            "round_index": active_round.round_index,
+            "question_text": active_round.question_text,
+            "target_skill": active_round.target_skill,
+            "difficulty": active_round.difficulty,
+            "status": active_round.status.value if hasattr(active_round.status, "value") else str(active_round.status),
+        }
+    else:
+        # Si no hay ronda activa, obtener la última
+        last_round = db.query(GroupInterviewRound).filter(
+            GroupInterviewRound.group_interview_session_id == session.id,
+        ).order_by(GroupInterviewRound.round_index.desc()).first()
+        
+        if last_round:
+            current_round_data = {
+                "round_index": last_round.round_index,
+                "question_text": last_round.question_text,
+                "target_skill": last_round.target_skill,
+                "difficulty": last_round.difficulty,
+                "status": last_round.status.value if hasattr(last_round.status, "value") else str(last_round.status),
+            }
+    
+    # Contar total de rondas
+    total_rounds = db.query(GroupInterviewRound).filter(
+        GroupInterviewRound.group_interview_session_id == session.id,
+    ).count()
+    
+    response.status_code = status.HTTP_200_OK
+    return {
+        "session_code": session.session_code,
+        "status": session.status,
+        "role_id": str(session.role_id),
+        "current_round": current_round_data,
+        "total_rounds": total_rounds,
+    }

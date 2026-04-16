@@ -36,6 +36,7 @@ async def websocket_endpoint(websocket: WebSocket, session_code: str, user_id: s
         # Extraer valores primitivos antes de cerrar sesión para evitar acceso a ORM detached.
         room_id = group_session.session_code
         interview_session_id = interview_session.id
+        group_status = group_session.status
     except InterviewSessionNotFoundError:
         await websocket.close(code=1008, reason="group_session_not_found")
         return
@@ -50,6 +51,17 @@ async def websocket_endpoint(websocket: WebSocket, session_code: str, user_id: s
 
     if not room_id or interview_session_id is None:
         await websocket.close(code=1011, reason="invalid_join_state")
+        return
+
+    # Task-066-06: Bloquear ingreso tardío si la sala ya inició o cerró
+    # Verificar si el usuario ya estaba conectado antes
+    already_connected = any(
+        uid == str(parsed_user_id) 
+        for uid, ws in manager.rooms.get(room_id, [])
+    )
+    
+    if (group_status in ["in_progress", "closed"]) and not already_connected:
+        await websocket.close(code=1008, reason="session_already_started")
         return
 
     await manager.connect(websocket, room_id, user_id)
