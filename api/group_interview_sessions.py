@@ -322,7 +322,7 @@ async def create_next_round(
     await _broadcast_group_event(
         group_session.session_code,
         {
-            "event": "question_new",
+            "event": "question_generated",
             "session_code": group_session.session_code,
             "round_id": str(round_item.id),
             "round_index": round_item.round_index,
