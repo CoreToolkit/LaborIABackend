@@ -67,6 +67,20 @@ def _format_previous_questions(previous_questions: Iterable[str] | None) -> str:
 	return "\n".join(rows) if rows else "- None"
 
 
+def _build_candidate_context(profile: Any, skills: Iterable[Any], experiences: Iterable[Any]) -> str:
+	return (
+		f"Candidate profile:\n"
+		f"- Full name: {_safe_text(getattr(profile, 'full_name', None))}\n"
+		f"- Career: {_safe_text(getattr(profile, 'career', None))}\n"
+		f"- University: {_safe_text(getattr(profile, 'university', None))}\n"
+		f"- Graduation date: {_date_text(getattr(profile, 'graduation_date', None))}\n"
+		f"- English level: {_safe_text(getattr(getattr(profile, 'english_level', None), 'value', None))}\n"
+		f"- Profile description: {_safe_text(getattr(profile, 'description', None), fallback='No description')}\n\n"
+		f"Skills:\n{_format_skills(skills)}\n\n"
+		f"Experiences:\n{_format_experiences(experiences)}"
+	)
+
+
 def get_question_generation_options(overrides: dict | None = None) -> dict:
 	options = dict(DEFAULT_QUESTION_OPTIONS)
 	if not overrides:
@@ -97,16 +111,7 @@ def build_question_generation_prompts(
 		"Use only provided profile context. Do not invent technologies, projects, companies, or experience. "
 		"If context is limited, ask a fundamental question tied to known skills."
 	)
-
-	profile_summary = (
-		f"Candidate profile:\n"
-		f"- Full name: {_safe_text(getattr(profile, 'full_name', None))}\n"
-		f"- Career: {_safe_text(getattr(profile, 'career', None))}\n"
-		f"- University: {_safe_text(getattr(profile, 'university', None))}\n"
-		f"- Graduation date: {_date_text(getattr(profile, 'graduation_date', None))}\n"
-		f"- English level: {_safe_text(getattr(getattr(profile, 'english_level', None), 'value', None))}\n"
-		f"- Profile description: {_safe_text(getattr(profile, 'description', None), fallback='No description')}"
-	)
+	profile_summary = _build_candidate_context(profile, skills, experiences)
 
 	focus = _safe_text(target_skill, fallback="Auto-select best-fit skill from profile")
 	difficulty_value = _safe_text(difficulty, fallback="adaptive")
@@ -122,6 +127,54 @@ def build_question_generation_prompts(
 		f"- Keep wording simple, direct, and technical\n"
 		f"- Ask only one question\n"
 		f"- Return only the question text"
+	)
+
+	return system_prompt, user_prompt
+
+
+def build_group_question_generation_prompts(
+	profile: Any,
+	skills: Iterable[Any],
+	experiences: Iterable[Any],
+	*,
+	role_name: str,
+	role_description: str | None = None,
+	target_skill: str | None = None,
+	difficulty: str | None = None,
+	previous_questions: Iterable[str] | None = None,
+) -> tuple[str, str]:
+	"""
+	Build prompts for group interview question generation.
+	Mixes candidate profile context with the interview room role context.
+	"""
+	system_prompt = (
+		"Eres un entrevistador tecnico para una entrevista grupal. "
+		"Genera exactamente una pregunta en espanol, clara y concreta. "
+		"No incluyas respuestas, pistas, explicaciones, markdown, viñetas ni numeracion. "
+		"Usa solo el contexto provisto del candidato y del rol de la sala. "
+		"No inventes tecnologias, proyectos, empresas ni experiencia. "
+		"Si el contexto es limitado, formula una pregunta fundamental y relevante al rol."
+	)
+
+	context = _build_candidate_context(profile, skills, experiences)
+	role_context = (
+		f"Contexto de la entrevista grupal:\n"
+		f"- Rol objetivo: {_safe_text(role_name)}\n"
+		f"- Descripcion del rol: {_safe_text(role_description, fallback='N/A')}\n"
+		f"- Dificultad de la sala: {_safe_text(difficulty, fallback='adaptive')}\n"
+		f"- Habilidad objetivo: {_safe_text(target_skill, fallback='general')}"
+	)
+
+	user_prompt = (
+		f"{context}\n\n"
+		f"{role_context}\n\n"
+		f"Preguntas previas a evitar repetir:\n{_format_previous_questions(previous_questions)}\n\n"
+		f"Restricciones de generacion:\n"
+		f"- Formula una sola pregunta\n"
+		f"- Mantente alineado con el perfil y el rol\n"
+		f"- Evita repetir preguntas anteriores\n"
+		f"- Usa lenguaje simple, directo y tecnico\n"
+		f"- Devuelve solo el texto de la pregunta"
 	)
 
 	return system_prompt, user_prompt

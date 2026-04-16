@@ -17,10 +17,12 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 import api.group_interview_sessions as group_sessions_module
+import services.group_interview_orchestrator_service as orchestrator_module
 from core.database import Base
 from core.jwt import create_token
 from models.group_interview_session import GroupInterviewSession
 from models.job_role import JobRole, JobRoleCategory, RoleEnglishLevel, SeniorityLevel
+from models.profile import EnglishLevel, Profile
 from models.user import User
 
 
@@ -91,6 +93,25 @@ def _create_role(
         db.commit()
         db.refresh(role)
         return role
+    finally:
+        db.close()
+
+
+def _create_profile(user: User) -> Profile:
+    db = TestSessionLocal()
+    try:
+        profile = Profile(
+            user_id=user.id,
+            full_name=user.name,
+            career="Software Engineer",
+            university="Example University",
+            description="Backend engineer focused on APIs and Python.",
+            english_level=EnglishLevel.ADVANCED,
+        )
+        db.add(profile)
+        db.commit()
+        db.refresh(profile)
+        return profile
     finally:
         db.close()
 
@@ -599,3 +620,199 @@ def test_close_group_session_when_waiting_returns_409():
     )
 
     assert close_response.status_code == 409
+
+
+def test_create_next_round_creates_round_and_returns_200():
+    user = _create_user()
+    _create_profile(user)
+    role = _create_role()
+    auth_headers = _auth_headers_for_user(user)
+
+    create_response = client.post(
+        "/api/group-sessions",
+        json={
+            "role_id": str(role.id),
+            "difficulty": "intermediate",
+        },
+        headers=auth_headers,
+    )
+    session_code = create_response.json()["session_code"]
+
+    client.post(
+        f"/api/group-sessions/{session_code}/start",
+        headers=auth_headers,
+    )
+
+    async def _fake_ask(self, question: str, system_prompt: str = None, temperature: float = None, max_tokens: int = 256, top_p: float = None):
+        _ = (question, system_prompt, temperature, max_tokens, top_p)
+        return "Explica como funciona la inyeccion de dependencias en FastAPI."
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(orchestrator_module.AzureOpenAIClient, "ask", _fake_ask)
+
+    try:
+        next_round_response = client.post(
+            f"/api/group-sessions/{session_code}/rounds/next",
+            json={
+                "target_skill": "Python",
+                "difficulty": "intermediate",
+            },
+            headers=auth_headers,
+        )
+    finally:
+        monkeypatch.undo()
+
+    assert next_round_response.status_code == 200
+    payload = next_round_response.json()
+    assert payload["round_index"] == 1
+    assert payload["difficulty"] == "intermediate"
+    assert payload["target_skill"] == "Python"
+    assert payload["question_text"]
+
+
+def test_create_next_round_emits_round_started_and_question_generated(monkeypatch):
+    emitted: list[tuple[str, str]] = []
+
+    async def _fake_broadcast_text(message: str, room_id: str, sender_id: str = ""):
+        _ = sender_id
+        emitted.append((message, room_id))
+
+    async def _fake_ask(self, question: str, system_prompt: str = None, temperature: float = None, max_tokens: int = 256, top_p: float = None):
+        _ = (question, system_prompt, temperature, max_tokens, top_p)
+        return "Cual es la diferencia entre concurrencia y paralelismo en Python?"
+
+    monkeypatch.setattr(group_sessions_module.manager, "broadcast_text", _fake_broadcast_text)
+    monkeypatch.setattr(orchestrator_module.AzureOpenAIClient, "ask", _fake_ask)
+
+    user = _create_user()
+    _create_profile(user)
+    role = _create_role()
+    auth_headers = _auth_headers_for_user(user)
+
+    create_response = client.post(
+        "/api/group-sessions",
+        json={
+            "role_id": str(role.id),
+            "difficulty": "intermediate",
+        },
+        headers=auth_headers,
+    )
+    session_code = create_response.json()["session_code"]
+    client.post(f"/api/group-sessions/{session_code}/start", headers=auth_headers)
+    emitted.clear()
+
+    response = client.post(
+        f"/api/group-sessions/{session_code}/rounds/next",
+        json={"target_skill": "Python"},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert len(emitted) == 2
+    first_payload = json.loads(emitted[0][0])
+    second_payload = json.loads(emitted[1][0])
+    assert first_payload["event"] == "round_started"
+    assert second_payload["event"] == "question_generated"
+
+
+def test_create_next_round_returns_409_when_session_not_started():
+    user = _create_user()
+    _create_profile(user)
+    role = _create_role()
+    auth_headers = _auth_headers_for_user(user)
+
+    create_response = client.post(
+        "/api/group-sessions",
+        json={
+            "role_id": str(role.id),
+            "difficulty": "intermediate",
+        },
+        headers=auth_headers,
+    )
+    session_code = create_response.json()["session_code"]
+
+    response = client.post(
+        f"/api/group-sessions/{session_code}/rounds/next",
+        json={"target_skill": "Python"},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 409
+
+
+def test_create_next_round_returns_403_for_non_host(monkeypatch):
+    async def _fake_ask(self, question: str, system_prompt: str = None, temperature: float = None, max_tokens: int = 256, top_p: float = None):
+        _ = (question, system_prompt, temperature, max_tokens, top_p)
+        return "Pregunta cualquiera"
+
+    monkeypatch.setattr(orchestrator_module.AzureOpenAIClient, "ask", _fake_ask)
+
+    host = _create_user()
+    _create_profile(host)
+    other_user = _create_user()
+    _create_profile(other_user)
+    role = _create_role()
+    host_headers = _auth_headers_for_user(host)
+    other_headers = _auth_headers_for_user(other_user)
+
+    create_response = client.post(
+        "/api/group-sessions",
+        json={
+            "role_id": str(role.id),
+            "difficulty": "intermediate",
+        },
+        headers=host_headers,
+    )
+    session_code = create_response.json()["session_code"]
+    client.post(f"/api/group-sessions/{session_code}/start", headers=host_headers)
+
+    response = client.post(
+        f"/api/group-sessions/{session_code}/rounds/next",
+        json={"target_skill": "Python"},
+        headers=other_headers,
+    )
+
+    assert response.status_code == 403
+
+
+def test_create_next_round_returns_502_when_ai_fails(monkeypatch):
+    async def _fake_ask(self, question: str, system_prompt: str = None, temperature: float = None, max_tokens: int = 256, top_p: float = None):
+        _ = (question, system_prompt, temperature, max_tokens, top_p)
+        raise Exception("azure down")
+
+    monkeypatch.setattr(orchestrator_module.AzureOpenAIClient, "ask", _fake_ask)
+
+    user = _create_user()
+    _create_profile(user)
+    role = _create_role()
+    auth_headers = _auth_headers_for_user(user)
+
+    create_response = client.post(
+        "/api/group-sessions",
+        json={
+            "role_id": str(role.id),
+            "difficulty": "intermediate",
+        },
+        headers=auth_headers,
+    )
+    session_code = create_response.json()["session_code"]
+    client.post(f"/api/group-sessions/{session_code}/start", headers=auth_headers)
+
+    response = client.post(
+        f"/api/group-sessions/{session_code}/rounds/next",
+        json={"target_skill": "Python"},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 502
+
+
+def test_create_next_round_contract_requires_authentication():
+    response = client.post(
+        "/api/group-sessions/ABCD1234/rounds/next",
+        json={
+            "target_skill": "Python",
+        },
+    )
+
+    assert response.status_code == 401

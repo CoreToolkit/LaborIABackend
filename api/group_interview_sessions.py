@@ -8,11 +8,17 @@ from sqlalchemy.orm import Session
 from core.database import get_db
 from core.jwt import get_current_user
 from exceptions.interview_session_exceptions import InterviewSessionNotFoundError
+from exceptions.profile_exceptions import ProfileNotFoundError
 from schemas.group_interview_session import (
     GroupInterviewSessionCreateSchema,
     GroupInterviewSessionDetailSchema,
     GroupInterviewSessionResponseSchema,
 )
+from schemas.group_interview_round import (
+    GroupInterviewNextRoundRequestSchema,
+    GroupInterviewRoundNextResponseSchema,
+)
+from services.group_interview_orchestrator_service import GroupInterviewOrchestratorService
 from services.group_interview_session_service import GroupInterviewSessionService
 from services.websocket_service import manager
 
@@ -228,6 +234,84 @@ async def close_group_session(
 
     response.status_code = status.HTTP_200_OK
     return GroupInterviewSessionResponseSchema.model_validate(session).model_dump(mode="json")
+
+
+@router.post("/{session_code}/rounds/next", response_model=GroupInterviewRoundNextResponseSchema)
+async def create_next_round(
+    session_code: str,
+    body: GroupInterviewNextRoundRequestSchema,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    orchestrator = GroupInterviewOrchestratorService(db)
+
+    try:
+        group_session, round_item = await orchestrator.generate_next_round_question(
+            session_code=session_code,
+            requester_id=current_user["id"],
+            target_skill=body.target_skill,
+            difficulty=body.difficulty,
+        )
+    except InterviewSessionNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=exc.message,
+        ) from exc
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    except ProfileNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=exc.message,
+        ) from exc
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+
+    emitted_at = datetime.now(timezone.utc).isoformat()
+    await _broadcast_group_event(
+        group_session.session_code,
+        {
+            "event": "round_started",
+            "session_code": group_session.session_code,
+            "round_id": str(round_item.id),
+            "round_index": round_item.round_index,
+            "emitted_at": emitted_at,
+        },
+    )
+    await _broadcast_group_event(
+        group_session.session_code,
+        {
+            "event": "question_generated",
+            "session_code": group_session.session_code,
+            "round_id": str(round_item.id),
+            "round_index": round_item.round_index,
+            "question_text": round_item.question_text,
+            "target_skill": round_item.target_skill,
+            "difficulty": round_item.difficulty,
+            "emitted_at": emitted_at,
+        },
+    )
+
+    return {
+        "round_id": str(round_item.id),
+        "round_index": round_item.round_index,
+        "question_text": round_item.question_text,
+        "target_skill": round_item.target_skill,
+        "difficulty": round_item.difficulty,
+        "status": round_item.status.value if hasattr(round_item.status, "value") else str(round_item.status),
+        "created_at": round_item.created_at,
+    }
 
 
 @router.delete("/{group_session_id}")
