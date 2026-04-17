@@ -2,13 +2,19 @@ name: CI and Deploy
 
 on:
   push:
-    branches: [main, develop]
   pull_request:
-    branches: [main, develop]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
 
 jobs:
   ci:
     runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: sqlite:///./test.db
+      JWT_SECRET: ci-secret
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -16,7 +22,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Install dependencies
         run: |
@@ -27,8 +33,282 @@ jobs:
         run: |
           python -m pytest --cov=. --cov-report=term-missing --cov-fail-under=80
 
+      - name: Checkout Sentinel
+        if: |
+          (github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'develop')) ||
+          (github.event_name == 'pull_request' && (github.base_ref == 'main' || github.base_ref == 'develop'))
+        uses: actions/checkout@v5
+        with:
+          repository: JuanDiegoRV/Sentinel-AI-CD
+          ref: feature/Laboria_compatibility
+          path: sentinel-ai-cd
+
+      - name: Build backend image for Sentinel scan
+        if: |
+          (github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'develop')) ||
+          (github.event_name == 'pull_request' && (github.base_ref == 'main' || github.base_ref == 'develop'))
+        run: docker build -t laboria-backend:${{ github.sha }} .
+
+      - name: Install Trivy + Sentinel dependencies
+        if: |
+          (github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'develop')) ||
+          (github.event_name == 'pull_request' && (github.base_ref == 'main' || github.base_ref == 'develop'))
+        run: |
+          mkdir -p reports
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
+          python -m pip install --upgrade pip
+          pip install -r sentinel-ai-cd/requirements.txt
+
+      - name: Run Sentinel gate
+        if: |
+          (github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'develop')) ||
+          (github.event_name == 'pull_request' && (github.base_ref == 'main' || github.base_ref == 'develop'))
+        env:
+          IMAGE_NAME: laboria-backend:${{ github.sha }}
+          GATE_URL: http://127.0.0.1:8000
+        run: |
+          export AI_DISABLED=true
+          python -m uvicorn --app-dir sentinel-ai-cd/app main:app --host 127.0.0.1 --port 8000 > reports/sentinel.log 2>&1 &
+          sentinel_pid=$!
+          trap 'kill $sentinel_pid >/dev/null 2>&1 || true' EXIT
+
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if curl -fsS "${GATE_URL}/health" > /dev/null 2>&1; then
+              break
+            fi
+            sleep 2
+          done
+
+          if ! curl -fsS "${GATE_URL}/health" > /dev/null 2>&1; then
+            echo "Sentinel gate did not become healthy in time" >&2
+            cat reports/sentinel.log || true
+            exit 1
+          fi
+
+          trivy image \
+            --format json \
+            --output reports/trivy-image.json \
+            --severity CRITICAL,HIGH,MEDIUM,LOW \
+            --ignore-unfixed \
+            --exit-code 0 \
+            "$IMAGE_NAME"
+
+          python - <<'PY'
+          import json
+          import os
+          from collections import Counter
+
+          with open("reports/trivy-image.json", "r", encoding="utf-8") as f:
+              data = json.load(f)
+
+          severity_rank = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "UNKNOWN": 4}
+          counts = Counter()
+          unique = []
+          seen = set()
+          for result in data.get("Results", []):
+              for vuln in result.get("Vulnerabilities") or []:
+                  sev = (vuln.get("Severity") or "UNKNOWN").upper()
+                  vid = vuln.get("VulnerabilityID") or "UNKNOWN"
+                  pkg = vuln.get("PkgName") or "UNKNOWN"
+                  installed = vuln.get("InstalledVersion") or "UNKNOWN"
+                  fixed = vuln.get("FixedVersion") or "N/A"
+                  status = (vuln.get("Status") or "unknown").lower()
+                  primary_url = vuln.get("PrimaryURL") or ""
+                  key = (vid, pkg, installed, fixed, sev, status)
+                  if key in seen:
+                      continue
+                  seen.add(key)
+                  unique.append(
+                      {
+                          "severity": sev,
+                          "vid": vid,
+                          "pkg": pkg,
+                          "installed": installed,
+                          "fixed": fixed,
+                          "status": status,
+                          "url": primary_url,
+                      }
+                  )
+                  counts[sev] += 1
+
+          critical = counts.get("CRITICAL", 0)
+          high = counts.get("HIGH", 0)
+          medium = counts.get("MEDIUM", 0)
+          low = counts.get("LOW", 0)
+          blockers = [v for v in unique if v["severity"] in {"CRITICAL", "HIGH"}]
+          blockers.sort(key=lambda v: (severity_rank.get(v["severity"], 99), v["vid"], v["pkg"]))
+
+          with open("reports/trivy-summary.env", "w", encoding="utf-8") as envf:
+              envf.write(f"TRIVY_CRITICAL={critical}\n")
+              envf.write(f"TRIVY_HIGH={high}\n")
+              envf.write(f"TRIVY_MEDIUM={medium}\n")
+              envf.write(f"TRIVY_LOW={low}\n")
+
+          with open("reports/trivy-readable-summary.md", "w", encoding="utf-8") as s:
+              s.write("## Trivy Vulnerability Summary\n")
+              s.write(f"- Critical: `{critical}`\n")
+              s.write(f"- High: `{high}`\n")
+              s.write(f"- Medium: `{medium}`\n")
+              s.write(f"- Low: `{low}`\n")
+              s.write(f"- Unique vulnerabilities (deduplicated): `{len(unique)}`\n")
+              if blockers:
+                  s.write("\n### Blockers (Critical/High)\n")
+                  s.write("| Severity | CVE/GHSA | Package | Installed | Fixed |\n")
+                  s.write("|---|---|---|---|---|\n")
+                  for v in blockers[:20]:
+                      vid = v["vid"]
+                      if v["url"]:
+                          vid = f"[{vid}]({v['url']})"
+                      s.write(
+                          f"| {v['severity']} | {vid} | `{v['pkg']}` | `{v['installed']}` | `{v['fixed']}` |\n"
+                      )
+                  if len(blockers) > 20:
+                      s.write(f"\n_...and {len(blockers) - 20} more blockers._\n")
+              else:
+                  s.write("\nNo Critical/High vulnerabilities found by Trivy.\n")
+          PY
+
+          source reports/trivy-summary.env
+          cat reports/trivy-readable-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+          set +e
+          python sentinel-ai-cd/pipeline/trivy_to_gate.py \
+            --report reports/trivy-image.json \
+            --image "$IMAGE_NAME" \
+            --gate "$GATE_URL" \
+            --dockerfile ./Dockerfile > reports/sentinel-gate.log 2>&1
+          gate_exit=$?
+          set -e
+
+          cat reports/sentinel-gate.log || true
+          decision=$(grep -E "GATE DECISION:" reports/sentinel-gate.log | tail -n 1 | sed -E 's/.*GATE DECISION:[[:space:]]*([A-Z_]+).*/\1/' || true)
+          if [ -z "$decision" ]; then
+            decision="UNKNOWN"
+          fi
+
+          {
+            echo "## Sentinel Gate Result"
+            echo "- Gate URL: \`$GATE_URL\` (servicio local dentro del runner de GitHub Actions)"
+            echo "- Decision: \`$decision\`"
+            echo "- Exit code: \`$gate_exit\`"
+            echo "- Trivy counts seen by CI: Critical=\`${TRIVY_CRITICAL:-0}\`, High=\`${TRIVY_HIGH:-0}\`, Medium=\`${TRIVY_MEDIUM:-0}\`, Low=\`${TRIVY_LOW:-0}\`"
+            echo "- Meaning:"
+            echo "  - \`ALLOW\` o \`PASS\`: imagen permitida, CI continua."
+            echo "  - \`WARNING\`: imagen permitida con riesgo, se recomienda remediacion (CI continua)."
+            echo "  - \`BLOCK\`/no-cero: imagen bloqueada o error tecnico, CI falla."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # Sentinel can return non-zero for WARNING depending on implementation.
+          # We only fail the pipeline on blocking decisions or technical errors.
+          case "$decision" in
+            ALLOW|PASS)
+              if [ "$gate_exit" -ne 0 ]; then
+                echo "::error title=Sentinel gate inconsistent state::Decision=${decision} pero exit=${gate_exit}. Se considera error tecnico."
+                exit "$gate_exit"
+              fi
+              ;;
+            WARNING)
+              echo "::warning title=Sentinel gate warning::Decision=${decision}; Critical=${TRIVY_CRITICAL:-0}; High=${TRIVY_HIGH:-0}. CI continua, revisar remediacion."
+              ;;
+            BLOCK|DENY|REJECT)
+              echo "::error title=Sentinel gate blocked::Decision=${decision}; Critical=${TRIVY_CRITICAL:-0}; High=${TRIVY_HIGH:-0}. Revisa el 'Step Summary' para ver CVEs, paquete afectado y version fija."
+              exit "$gate_exit"
+              ;;
+            *)
+              if [ "$gate_exit" -ne 0 ]; then
+                echo "::error title=Sentinel gate error::Decision=${decision}; exit=${gate_exit}. Revisa sentinel-gate.log."
+                exit "$gate_exit"
+              fi
+              ;;
+          esac
+
+      - name: Comment security summary on PR
+        if: |
+          always() &&
+          github.event_name == 'pull_request' &&
+          (github.base_ref == 'main' || github.base_ref == 'develop')
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require("fs");
+            const marker = "<!-- sentinel-security-summary -->";
+            const issue_number = context.payload.pull_request.number;
+
+            const readOrFallback = (path, fallback) => {
+              try {
+                return fs.readFileSync(path, "utf8");
+              } catch (e) {
+                return fallback;
+              }
+            };
+
+            const summary = readOrFallback(
+              "reports/trivy-readable-summary.md",
+              "No se encontro `reports/trivy-readable-summary.md` en este run."
+            );
+
+            const gateLog = readOrFallback("reports/sentinel-gate.log", "");
+            const decisionMatch = gateLog.match(/GATE DECISION:\s*([A-Z_]+)/);
+            const decision = decisionMatch ? decisionMatch[1] : "UNKNOWN";
+            const reasonMatch = gateLog.match(/Reason\s*:\s*(.+)/);
+            const reason = reasonMatch ? reasonMatch[1].trim() : "Sin razon reportada.";
+
+            const body = [
+              marker,
+              "## Sentinel Security Summary",
+              `- Decision: \`${decision}\``,
+              `- Reason: ${reason}`,
+              "",
+              summary,
+              "",
+              "_Comentario actualizado automaticamente por CI._",
+            ].join("\n");
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number,
+              per_page: 100,
+            });
+
+            const existing = comments.find((c) => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+              core.info(`Updated existing security summary comment: ${existing.id}`);
+            } else {
+              const created = await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number,
+                body,
+              });
+              core.info(`Created security summary comment: ${created.data.id}`);
+            }
+
+      - name: Upload Sentinel artifacts
+        if: |
+          always() && (
+            (github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'develop')) ||
+            (github.event_name == 'pull_request' && (github.base_ref == 'main' || github.base_ref == 'develop'))
+          )
+        uses: actions/upload-artifact@v4
+        with:
+          name: sentinel-artifacts
+          path: |
+            reports/trivy-image.json
+            reports/trivy-readable-summary.md
+            reports/trivy-summary.env
+            reports/sentinel.log
+            reports/sentinel-gate.log
+
       - name: Deploy to Render
-        if: github.ref == 'refs/heads/main' && success()
+        if: github.event_name == 'push' && github.ref_name == 'main' && success()
         env:
           deploy_url: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
         run: |
