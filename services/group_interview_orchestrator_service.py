@@ -5,8 +5,12 @@ import logging
 import time
 from datetime import datetime, timezone
 
+from sqlalchemy.orm import Session
+
 from ai.azure_openai_client import AzureOpenAIClient
 from exceptions.profile_exceptions import ProfileNotFoundError
+from models.interview_session import InterviewSession
+from models.question import Question
 from services.group_interview_round_service import GroupInterviewRoundService
 from services.group_interview_session_service import GroupInterviewSessionService
 from services.profile_service import ProfileService
@@ -64,6 +68,7 @@ class RoundEventPayloads:
 
 class GroupInterviewOrchestratorService:
     def __init__(self, db):
+        self.db = db
         self.profile_service = ProfileService(db)
         self.group_session_service = GroupInterviewSessionService(db)
         self.round_service = GroupInterviewRoundService(db)
@@ -182,6 +187,9 @@ class GroupInterviewOrchestratorService:
             metadata_json=round_metadata,
         )
 
+        # Task-066-07: persistir pregunta en tabla Question para cada InterviewSession del grupo
+        self._persist_round_questions(group_session_id=group_session.id, round_item=round_item)
+
         # AB#323: construir payloads de eventos aquí, no en el router
         event_payloads = self._build_round_event_payloads(
             session_code=group_session.session_code,
@@ -190,6 +198,43 @@ class GroupInterviewOrchestratorService:
         )
 
         return group_session, round_item, tts_result, event_payloads
+
+    # ------------------------------------------------------------------
+    # Persistencia de preguntas por ronda (Task-066-07)
+    # ------------------------------------------------------------------
+
+    def _persist_round_questions(self, *, group_session_id: int, round_item) -> None:
+        """
+        Crea un registro Question por cada InterviewSession participante del grupo.
+        Operación best-effort: un fallo no interrumpe el flujo de la ronda.
+        """
+        try:
+            interview_sessions = (
+                self.db.query(InterviewSession)
+                .filter(InterviewSession.group_interview_session_id == group_session_id)
+                .all()
+            )
+            questions = [
+                Question(
+                    interview_session_id=iv_session.id,
+                    question_text=round_item.question_text or "",
+                    category=round_item.target_skill,
+                    difficulty=round_item.difficulty,
+                    expected_topics=None,
+                    group_session_id=group_session_id,
+                    round_index=round_item.round_index,
+                )
+                for iv_session in interview_sessions
+            ]
+            if questions:
+                self.db.add_all(questions)
+                self.db.commit()
+        except Exception:
+            self.db.rollback()
+            logger.exception(
+                "Error al persistir preguntas de ronda para group_session_id=%s",
+                group_session_id,
+            )
 
     # ------------------------------------------------------------------
     # Construcción de eventos (AB#323)

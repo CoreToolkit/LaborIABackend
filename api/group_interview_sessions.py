@@ -9,8 +9,6 @@ from core.database import get_db
 from core.jwt import get_current_user
 from exceptions.interview_session_exceptions import InterviewSessionNotFoundError
 from exceptions.profile_exceptions import ProfileNotFoundError
-from models.interview_session import InterviewSession
-from models.question import Question
 from models.group_interview_round import GroupInterviewRound, GroupInterviewRoundStatus
 from schemas.group_interview_session import (
     GroupInterviewSessionCreateSchema,
@@ -280,33 +278,6 @@ async def create_next_round(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=str(exc),
         ) from exc
-
-    # Task-066-07: Persistir pregunta en tabla individual Question para cada InterviewSession
-    try:
-        interview_sessions = db.query(InterviewSession).filter(
-            InterviewSession.group_interview_session_id == group_session.id
-        ).all()
-        
-        questions_to_create = []
-        for iv_session in interview_sessions:
-            questions_to_create.append(
-                Question(
-                    interview_session_id=iv_session.id,
-                    question_text=round_item.question_text or "",
-                    category=round_item.target_skill,
-                    difficulty=round_item.difficulty,
-                    expected_topics=None,
-                    group_session_id=group_session.id,
-                    round_index=round_item.round_index,
-                )
-            )
-        
-        if questions_to_create:
-            db.add_all(questions_to_create)
-            db.commit()
-    except Exception as exc:
-        db.rollback()
-        logger.exception("Error creating Question records for session %s", group_session.id)
 
     emitted_at = datetime.now(timezone.utc).isoformat()  # noqa: F841 — reservado para logs futuros
     await _broadcast_group_event(
