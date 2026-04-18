@@ -249,7 +249,7 @@ async def create_next_round(
     orchestrator = GroupInterviewOrchestratorService(db)
 
     try:
-        group_session, round_item = await orchestrator.generate_next_round_question(
+        group_session, round_item, tts_result = await orchestrator.generate_next_round_question(
             session_code=session_code,
             requester_id=current_user["id"],
             target_skill=body.target_skill,
@@ -332,6 +332,37 @@ async def create_next_round(
             "emitted_at": emitted_at,
         },
     )
+
+    # AB#326 + AB#327: emitir question_audio_ready solo si TTS fue exitoso,
+    # o tts_error si falló (fallback no bloqueante, broadcast a todos).
+    if tts_result.tts_status == "ok":
+        await _broadcast_group_event(
+            group_session.session_code,
+            {
+                "event": "question_audio_ready",
+                "session_code": group_session.session_code,
+                "round_id": str(round_item.id),
+                "round_index": round_item.round_index,
+                "audio_b64": tts_result.audio_b64,
+                "question_text": round_item.question_text,
+                "emitted_at": emitted_at,
+            },
+        )
+    else:
+        # AB#325: error no bloqueante — el frontend recibe la pregunta en texto
+        await _broadcast_group_event(
+            group_session.session_code,
+            {
+                "event": "tts_error",
+                "session_code": group_session.session_code,
+                "round_id": str(round_item.id),
+                "round_index": round_item.round_index,
+                "tts_status": tts_result.tts_status,
+                "tts_error": tts_result.tts_error,
+                "question_text": round_item.question_text,
+                "emitted_at": emitted_at,
+            },
+        )
 
     return {
         "round_id": str(round_item.id),
