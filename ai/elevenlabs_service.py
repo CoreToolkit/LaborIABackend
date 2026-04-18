@@ -41,16 +41,18 @@ class ElevenLabsService:
             "xi-api-key": self.api_key,
             "Accept": "application/json",
         }
-        self.client = httpx.AsyncClient(
-            base_url=self.base_url,
-            headers=self.headers,
-            timeout=self.timeout,
-        )
+        # El cliente se crea por llamada en post() para evitar problemas de
+        # ciclo de vida con httpx.AsyncClient (AB#325 revisión de recursos).
+        self._client_defaults = {
+            "base_url": self.base_url,
+            "headers": self.headers,
+            "timeout": self.timeout,
+        }
 
     async def health_check(self) -> bool:
         """Verifica que la configuracion base de ElevenLabs este cargada."""
         try:
-            return bool(self.api_key and self.client)
+            return bool(self.api_key)
         except Exception as e:
             logger.warning("ElevenLabs no esta disponible: %s", e)
             return False
@@ -62,20 +64,25 @@ class ElevenLabsService:
         params: dict | None = None,
         headers: dict | None = None,
     ) -> httpx.Response:
-        """Realiza POST con timeout explícito. Sin reintentos (usar generate_speech_with_retry)."""
+        """
+        Realiza POST con timeout explícito usando un cliente por llamada.
+        Sin reintentos (usar generate_speech_with_retry para eso).
+        El cliente se cierra correctamente al salir del bloque async with.
+        """
         request_headers = dict(self.headers)
         if headers:
             request_headers.update(headers)
 
         try:
-            response = await self.client.post(
-                path,
-                json=json,
-                params=params,
-                headers=request_headers,
-            )
-            response.raise_for_status()
-            return response
+            async with httpx.AsyncClient(**self._client_defaults) as client:
+                response = await client.post(
+                    path,
+                    json=json,
+                    params=params,
+                    headers=request_headers,
+                )
+                response.raise_for_status()
+                return response
         except httpx.TimeoutException:
             raise Exception(f"Timeout: ElevenLabs tardó más de {self.timeout}s")
         except httpx.ConnectError:

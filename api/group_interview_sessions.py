@@ -249,7 +249,7 @@ async def create_next_round(
     orchestrator = GroupInterviewOrchestratorService(db)
 
     try:
-        group_session, round_item, tts_result = await orchestrator.generate_next_round_question(
+        group_session, round_item, tts_result, event_payloads = await orchestrator.generate_next_round_question(
             session_code=session_code,
             requester_id=current_user["id"],
             target_skill=body.target_skill,
@@ -308,61 +308,20 @@ async def create_next_round(
         db.rollback()
         logger.exception("Error creating Question records for session %s", group_session.id)
 
-    emitted_at = datetime.now(timezone.utc).isoformat()
+    emitted_at = datetime.now(timezone.utc).isoformat()  # noqa: F841 — reservado para logs futuros
     await _broadcast_group_event(
         group_session.session_code,
-        {
-            "event": "round_started",
-            "session_code": group_session.session_code,
-            "round_id": str(round_item.id),
-            "round_index": round_item.round_index,
-            "emitted_at": emitted_at,
-        },
+        event_payloads.round_started,
     )
     await _broadcast_group_event(
         group_session.session_code,
-        {
-            "event": "question_generated",
-            "session_code": group_session.session_code,
-            "round_id": str(round_item.id),
-            "round_index": round_item.round_index,
-            "question_text": round_item.question_text,
-            "target_skill": round_item.target_skill,
-            "difficulty": round_item.difficulty,
-            "emitted_at": emitted_at,
-        },
+        event_payloads.question_generated,
     )
-
-    # AB#326 + AB#327: emitir question_audio_ready solo si TTS fue exitoso,
-    # o tts_error si falló (fallback no bloqueante, broadcast a todos).
-    if tts_result.tts_status == "ok":
-        await _broadcast_group_event(
-            group_session.session_code,
-            {
-                "event": "question_audio_ready",
-                "session_code": group_session.session_code,
-                "round_id": str(round_item.id),
-                "round_index": round_item.round_index,
-                "audio_b64": tts_result.audio_b64,
-                "question_text": round_item.question_text,
-                "emitted_at": emitted_at,
-            },
-        )
-    else:
-        # AB#325: error no bloqueante — el frontend recibe la pregunta en texto
-        await _broadcast_group_event(
-            group_session.session_code,
-            {
-                "event": "tts_error",
-                "session_code": group_session.session_code,
-                "round_id": str(round_item.id),
-                "round_index": round_item.round_index,
-                "tts_status": tts_result.tts_status,
-                "tts_error": tts_result.tts_error,
-                "question_text": round_item.question_text,
-                "emitted_at": emitted_at,
-            },
-        )
+    # AB#326 + AB#327: question_audio_ready o tts_error, construidos en el orquestador
+    await _broadcast_group_event(
+        group_session.session_code,
+        event_payloads.audio_event,
+    )
 
     return {
         "round_id": str(round_item.id),

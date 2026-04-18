@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import logging
 import time
+from datetime import datetime, timezone
 
 from ai.azure_openai_client import AzureOpenAIClient
 from exceptions.profile_exceptions import ProfileNotFoundError
@@ -13,11 +14,20 @@ from utils.prompts.question_generation import build_group_question_generation_pr
 
 logger = logging.getLogger(__name__)
 
-# Resultado TTS devuelto por el orquestador
-# audio_b64: audio en base64 (mp3) o None si TTS falló (fallback)
-# tts_status: "ok" | "fallback" | "error"
-# tts_error: mensaje de error si aplica
+# Mensaje seguro expuesto al cliente cuando TTS falla.
+# No expone detalles del proveedor (AB#325 sanitización).
+_TTS_SAFE_ERROR_MSG = "El audio no está disponible en este momento. La pregunta se muestra en texto."
+
+
 class TTSResult:
+    """
+    Resultado TTS devuelto por el orquestador.
+
+    audio_b64   : audio mp3 en base64 o None si TTS falló (fallback)
+    tts_status  : "ok" | "fallback"
+    tts_error   : mensaje seguro para el cliente (nunca detalle crudo del proveedor)
+    tts_elapsed_ms: tiempo de la llamada TTS en ms
+    """
     __slots__ = ("audio_b64", "tts_status", "tts_error", "tts_elapsed_ms")
 
     def __init__(
@@ -31,6 +41,25 @@ class TTSResult:
         self.tts_status = tts_status
         self.tts_error = tts_error
         self.tts_elapsed_ms = tts_elapsed_ms
+
+
+class RoundEventPayloads:
+    """
+    Payloads de eventos websocket para una ronda.
+    AB#323: la decisión de qué eventos emitir queda encapsulada en el orquestador,
+    no en el router.
+    """
+    __slots__ = ("round_started", "question_generated", "audio_event")
+
+    def __init__(
+        self,
+        round_started: dict,
+        question_generated: dict,
+        audio_event: dict,
+    ):
+        self.round_started = round_started
+        self.question_generated = question_generated
+        self.audio_event = audio_event
 
 
 class GroupInterviewOrchestratorService:
@@ -63,9 +92,10 @@ class GroupInterviewOrchestratorService:
         """
         Encadena: generar pregunta (IA) → TTS (ElevenLabs con retry) → persistir ronda.
 
-        Retorna: (group_session, round_item, tts_result)
-        - tts_result.tts_status: "ok" | "fallback" | "error"
+        Retorna: (group_session, round_item, tts_result, event_payloads)
+        - tts_result.tts_status: "ok" | "fallback"
         - tts_result.audio_b64: audio mp3 en base64 o None
+        - event_payloads: RoundEventPayloads con los 3 eventos listos para broadcast
         La entrevista NO se cae si TTS falla (fallback no bloqueante).
         """
         group_session = self.group_session_service.get_group_session_by_code(session_code)
@@ -152,7 +182,80 @@ class GroupInterviewOrchestratorService:
             metadata_json=round_metadata,
         )
 
-        return group_session, round_item, tts_result
+        # AB#323: construir payloads de eventos aquí, no en el router
+        event_payloads = self._build_round_event_payloads(
+            session_code=group_session.session_code,
+            round_item=round_item,
+            tts_result=tts_result,
+        )
+
+        return group_session, round_item, tts_result, event_payloads
+
+    # ------------------------------------------------------------------
+    # Construcción de eventos (AB#323)
+    # ------------------------------------------------------------------
+
+    def _build_round_event_payloads(
+        self,
+        *,
+        session_code: str,
+        round_item,
+        tts_result: TTSResult,
+    ) -> RoundEventPayloads:
+        """
+        Construye los tres payloads de eventos para una ronda.
+        El router solo hace broadcast; la lógica de decisión queda aquí.
+        """
+        emitted_at = datetime.now(timezone.utc).isoformat()
+        round_id = str(round_item.id)
+
+        round_started = {
+            "event": "round_started",
+            "session_code": session_code,
+            "round_id": round_id,
+            "round_index": round_item.round_index,
+            "emitted_at": emitted_at,
+        }
+
+        question_generated = {
+            "event": "question_generated",
+            "session_code": session_code,
+            "round_id": round_id,
+            "round_index": round_item.round_index,
+            "question_text": round_item.question_text,
+            "target_skill": round_item.target_skill,
+            "difficulty": round_item.difficulty,
+            "emitted_at": emitted_at,
+        }
+
+        # AB#326: question_audio_ready solo si TTS ok; tts_error si falló
+        if tts_result.tts_status == "ok":
+            audio_event = {
+                "event": "question_audio_ready",
+                "session_code": session_code,
+                "round_id": round_id,
+                "round_index": round_item.round_index,
+                "audio_b64": tts_result.audio_b64,
+                "question_text": round_item.question_text,
+                "emitted_at": emitted_at,
+            }
+        else:
+            audio_event = {
+                "event": "tts_error",
+                "session_code": session_code,
+                "round_id": round_id,
+                "round_index": round_item.round_index,
+                # AB#325: mensaje seguro, nunca detalle crudo del proveedor
+                "tts_error": tts_result.tts_error or _TTS_SAFE_ERROR_MSG,
+                "question_text": round_item.question_text,
+                "emitted_at": emitted_at,
+            }
+
+        return RoundEventPayloads(
+            round_started=round_started,
+            question_generated=question_generated,
+            audio_event=audio_event,
+        )
 
     # ------------------------------------------------------------------
     # TTS con fallback (AB#323, AB#324, AB#325)
@@ -162,11 +265,15 @@ class GroupInterviewOrchestratorService:
         """
         Intenta generar audio TTS con reintentos.
         Si falla: retorna TTSResult con tts_status="fallback", sin lanzar excepción.
-        El flujo de entrevista continúa con la pregunta en texto.
+        El mensaje de error expuesto al cliente es siempre el mensaje seguro.
         """
         if self._elevenlabs_client is None:
             logger.info("TTS deshabilitado (ElevenLabs no configurado), usando fallback de texto")
-            return TTSResult(audio_b64=None, tts_status="fallback", tts_error="ElevenLabs no configurado")
+            return TTSResult(
+                audio_b64=None,
+                tts_status="fallback",
+                tts_error=_TTS_SAFE_ERROR_MSG,
+            )
 
         t0_tts = time.monotonic()
         try:
@@ -177,16 +284,15 @@ class GroupInterviewOrchestratorService:
             return TTSResult(audio_b64=audio_b64, tts_status="ok", tts_elapsed_ms=tts_elapsed_ms)
         except Exception as exc:
             tts_elapsed_ms = int((time.monotonic() - t0_tts) * 1000)
-            error_msg = str(exc)
-            # AB#325: error no bloqueante — se loguea pero NO se propaga
+            # AB#325: loguear detalle interno pero NO exponer al cliente
             logger.warning(
                 "TTS falló tras reintentos (%dms): %s. Continuando con fallback de texto.",
                 tts_elapsed_ms,
-                error_msg,
+                exc,
             )
             return TTSResult(
                 audio_b64=None,
                 tts_status="fallback",
-                tts_error=error_msg,
+                tts_error=_TTS_SAFE_ERROR_MSG,
                 tts_elapsed_ms=tts_elapsed_ms,
             )
