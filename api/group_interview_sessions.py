@@ -254,7 +254,7 @@ async def create_next_round(
     orchestrator = GroupInterviewOrchestratorService(db)
 
     try:
-        group_session, round_item = await orchestrator.generate_next_round_question(
+        group_session, round_item, tts_result, event_payloads = await orchestrator.generate_next_round_question(
             session_code=session_code,
             requester_id=current_user["id"],
             target_skill=body.target_skill,
@@ -286,56 +286,19 @@ async def create_next_round(
             detail=str(exc),
         ) from exc
 
-    # Task-066-07: Persistir pregunta en tabla individual Question para cada InterviewSession
-    try:
-        interview_sessions = db.query(InterviewSession).filter(
-            InterviewSession.group_interview_session_id == group_session.id
-        ).all()
-        
-        questions_to_create = []
-        for iv_session in interview_sessions:
-            questions_to_create.append(
-                Question(
-                    interview_session_id=iv_session.id,
-                    question_text=round_item.question_text or "",
-                    category=round_item.target_skill,
-                    difficulty=round_item.difficulty,
-                    expected_topics=None,
-                    group_session_id=group_session.id,
-                    round_index=round_item.round_index,
-                )
-            )
-        
-        if questions_to_create:
-            db.add_all(questions_to_create)
-            db.commit()
-    except Exception as exc:
-        db.rollback()
-        logger.exception("Error creating Question records for session %s", group_session.id)
-
-    emitted_at = datetime.now(timezone.utc).isoformat()
+    emitted_at = datetime.now(timezone.utc).isoformat()  # noqa: F841 — reservado para logs futuros
     await _broadcast_group_event(
         group_session.session_code,
-        {
-            "event": "round_started",
-            "session_code": group_session.session_code,
-            "round_id": str(round_item.id),
-            "round_index": round_item.round_index,
-            "emitted_at": emitted_at,
-        },
+        event_payloads.round_started,
     )
     await _broadcast_group_event(
         group_session.session_code,
-        {
-            "event": "question_generated",
-            "session_code": group_session.session_code,
-            "round_id": str(round_item.id),
-            "round_index": round_item.round_index,
-            "question_text": round_item.question_text,
-            "target_skill": round_item.target_skill,
-            "difficulty": round_item.difficulty,
-            "emitted_at": emitted_at,
-        },
+        event_payloads.question_generated,
+    )
+    # AB#326 + AB#327: question_audio_ready o tts_error, construidos en el orquestador
+    await _broadcast_group_event(
+        group_session.session_code,
+        event_payloads.audio_event,
     )
 
     return {

@@ -34,7 +34,7 @@ async def websocket_endpoint(websocket: WebSocket, session_code: str, user_id: s
     interview_session_id: int | None = None
     try:
         group_service = GroupInterviewSessionService(db)
-        group_session, interview_session = group_service.join_group_session(
+        group_session, interview_session, is_returning_participant = group_service.join_group_session(
             session_code=session_code,
             user_id=parsed_user_id,
         )
@@ -67,21 +67,31 @@ async def websocket_endpoint(websocket: WebSocket, session_code: str, user_id: s
         await websocket.close(code=1011, reason="invalid_join_state")
         return
 
-    # Task-066-06: Bloquear ingreso tardío si la sala ya inició o cerró
-    # Verificar si el usuario ya estaba conectado antes
+    # Task-066-06: Bloquear ingreso tardío.
+    # - "closed" → siempre bloquear
+    # - "in_progress" → permitir si el usuario ya era participante (is_returning_participant=True)
+    #   o si ya tiene conexión WS activa en memoria (reconexión rápida sin recarga).
+    # - "waiting" → siempre permitir
     already_connected = any(
-        uid == str(parsed_user_id) 
+        uid == str(parsed_user_id)
         for uid, ws in manager.rooms.get(room_id, [])
     )
-    
+
     logger.info(
-        "Late-join check for session %s user %s: already_connected=%s status=%s",
+        "Late-join check for session %s user %s: already_connected=%s status=%s is_returning=%s",
         session_code,
         user_id,
         already_connected,
         group_status,
+        is_returning_participant,
     )
-    if (group_status in ["in_progress", "closed"]) and not already_connected:
+
+    if group_status == "closed":
+        logger.warning("Blocking join for closed session %s user %s", session_code, user_id)
+        await websocket.close(code=1008, reason="session_already_started")
+        return
+
+    if group_status == "in_progress" and not already_connected and not is_returning_participant:
         logger.warning("Blocking late join for session %s user %s", session_code, user_id)
         await websocket.close(code=1008, reason="session_already_started")
         return
