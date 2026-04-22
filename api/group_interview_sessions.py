@@ -1,14 +1,18 @@
 import json
 import logging
 from datetime import datetime, timezone
+from uuid import UUID as PyUUID
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Response, UploadFile, status
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
+from ai.azure_speech_service import AzureSpeechService
 from core.database import get_db
 from core.jwt import get_current_user
 from exceptions.interview_session_exceptions import InterviewSessionNotFoundError
 from exceptions.profile_exceptions import ProfileNotFoundError
+from models.evaluation import Evaluation, EvaluationStatus
 from models.interview_session import InterviewSession
 from models.question import Question
 from models.group_interview_round import GroupInterviewRound, GroupInterviewRoundStatus
@@ -21,6 +25,7 @@ from schemas.group_interview_round import (
     GroupInterviewNextRoundRequestSchema,
     GroupInterviewRoundNextResponseSchema,
 )
+from services.answer_evaluator import run_evaluation_background
 from services.group_interview_orchestrator_service import GroupInterviewOrchestratorService
 from services.group_interview_session_service import GroupInterviewSessionService
 from services.websocket_service import manager
@@ -375,6 +380,103 @@ def delete_group_session(
     
     response.status_code = status.HTTP_204_NO_CONTENT
     return None
+
+
+@router.post("/{session_code}/answers/audio")
+async def submit_audio_answer(
+    session_code: str,
+    background_tasks: BackgroundTasks,
+    round_id: str = Form(...),
+    audio_file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Transcribir respuesta de audio de un participante y lanzar evaluación automática."""
+    service = GroupInterviewSessionService(db)
+    try:
+        group_session = service.get_group_session_by_code(session_code)
+    except InterviewSessionNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=exc.message) from exc
+
+    user_session = db.query(InterviewSession).filter(
+        InterviewSession.user_id == current_user["id"],
+        InterviewSession.group_interview_session_id == group_session.id,
+    ).first()
+    if not user_session:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No eres participante de esta sala.")
+
+    try:
+        round_uuid = PyUUID(round_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="round_id inválido.") from exc
+
+    round_item = db.query(GroupInterviewRound).filter(
+        GroupInterviewRound.id == round_uuid,
+        GroupInterviewRound.group_interview_session_id == group_session.id,
+    ).first()
+    if not round_item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ronda no encontrada.")
+
+    question = db.query(Question).filter(
+        Question.interview_session_id == user_session.id,
+        Question.round_index == round_item.round_index,
+        Question.group_session_id == group_session.id,
+    ).first()
+    if not question:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No hay pregunta registrada para esta ronda.")
+
+    audio_bytes = await audio_file.read()
+    await audio_file.close()
+    if not audio_bytes:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El archivo de audio está vacío.")
+
+    try:
+        speech_service = AzureSpeechService()
+        transcription: str = await run_in_threadpool(
+            speech_service.transcribe_audio,
+            audio_bytes,
+            audio_file.filename or "answer.wav",
+        )
+    except Exception as exc:
+        logger.exception("Error transcribiendo audio, sesión %s", session_code)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Error en transcripción: {exc}") from exc
+
+    if not transcription or not transcription.strip():
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No se detectó voz en el audio enviado.")
+
+    evaluation = Evaluation(
+        question_id=question.id,
+        interview_session_id=user_session.id,
+        user_answer_text=transcription,
+        status=EvaluationStatus.PENDING,
+    )
+    db.add(evaluation)
+    db.commit()
+    db.refresh(evaluation)
+
+    background_tasks.add_task(
+        run_evaluation_background,
+        evaluation_id=str(evaluation.id),
+        question_text=question.question_text,
+        expected_topics=question.expected_topics,
+        user_answer=transcription,
+    )
+
+    await _broadcast_group_event(
+        session_code,
+        {
+            "event": "answer_transcribed",
+            "user_id": str(current_user["id"]),
+            "round_id": round_id,
+            "evaluation_id": str(evaluation.id),
+        },
+    )
+
+    return {
+        "transcription": transcription,
+        "evaluation_id": str(evaluation.id),
+        "question_id": question.id,
+    }
 
 
 @router.get("/{session_code}/state")
