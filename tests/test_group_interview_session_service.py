@@ -76,7 +76,7 @@ def test_join_group_session_creates_interview_session_once():
             difficulty="intermediate",
         )
 
-        returned_group_session, interview_session = service.join_group_session(
+        returned_group_session, interview_session, _ = service.join_group_session(
             session_code=group_session.session_code,
             user_id=user.id,
         )
@@ -85,7 +85,7 @@ def test_join_group_session_creates_interview_session_once():
         assert interview_session.user_id == user.id
         assert interview_session.group_interview_session_id == group_session.id
 
-        _, interview_session_again = service.join_group_session(
+        _, interview_session_again, _ = service.join_group_session(
             session_code=group_session.session_code,
             user_id=user.id,
         )

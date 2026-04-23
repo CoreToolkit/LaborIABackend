@@ -1,14 +1,21 @@
 import json
 import logging
 from datetime import datetime, timezone
+from uuid import UUID as PyUUID
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Response, UploadFile, status
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
+from ai.azure_speech_service import AzureSpeechService
 from core.database import get_db
 from core.jwt import get_current_user
 from exceptions.interview_session_exceptions import InterviewSessionNotFoundError
 from exceptions.profile_exceptions import ProfileNotFoundError
+from models.evaluation import Evaluation, EvaluationStatus
+from models.interview_session import InterviewSession
+from models.question import Question
+from models.group_interview_round import GroupInterviewRound, GroupInterviewRoundStatus
 from schemas.group_interview_session import (
     GroupInterviewSessionCreateSchema,
     GroupInterviewSessionDetailSchema,
@@ -18,6 +25,7 @@ from schemas.group_interview_round import (
     GroupInterviewNextRoundRequestSchema,
     GroupInterviewRoundNextResponseSchema,
 )
+from services.answer_evaluator import run_evaluation_background
 from services.group_interview_orchestrator_service import GroupInterviewOrchestratorService
 from services.group_interview_session_service import GroupInterviewSessionService
 from services.websocket_service import manager
@@ -246,7 +254,7 @@ async def create_next_round(
     orchestrator = GroupInterviewOrchestratorService(db)
 
     try:
-        group_session, round_item = await orchestrator.generate_next_round_question(
+        group_session, round_item, tts_result, event_payloads = await orchestrator.generate_next_round_question(
             session_code=session_code,
             requester_id=current_user["id"],
             target_skill=body.target_skill,
@@ -278,29 +286,19 @@ async def create_next_round(
             detail=str(exc),
         ) from exc
 
-    emitted_at = datetime.now(timezone.utc).isoformat()
+    emitted_at = datetime.now(timezone.utc).isoformat()  # noqa: F841 — reservado para logs futuros
     await _broadcast_group_event(
         group_session.session_code,
-        {
-            "event": "round_started",
-            "session_code": group_session.session_code,
-            "round_id": str(round_item.id),
-            "round_index": round_item.round_index,
-            "emitted_at": emitted_at,
-        },
+        event_payloads.round_started,
     )
     await _broadcast_group_event(
         group_session.session_code,
-        {
-            "event": "question_generated",
-            "session_code": group_session.session_code,
-            "round_id": str(round_item.id),
-            "round_index": round_item.round_index,
-            "question_text": round_item.question_text,
-            "target_skill": round_item.target_skill,
-            "difficulty": round_item.difficulty,
-            "emitted_at": emitted_at,
-        },
+        event_payloads.question_generated,
+    )
+    # AB#326 + AB#327: question_audio_ready o tts_error, construidos en el orquestador
+    await _broadcast_group_event(
+        group_session.session_code,
+        event_payloads.audio_event,
     )
 
     return {
@@ -345,3 +343,166 @@ def delete_group_session(
     
     response.status_code = status.HTTP_204_NO_CONTENT
     return None
+
+
+@router.post("/{session_code}/answers/audio")
+async def submit_audio_answer(
+    session_code: str,
+    background_tasks: BackgroundTasks,
+    round_id: str = Form(...),
+    audio_file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Transcribir respuesta de audio de un participante y lanzar evaluación automática."""
+    service = GroupInterviewSessionService(db)
+    try:
+        group_session = service.get_group_session_by_code(session_code)
+    except InterviewSessionNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=exc.message) from exc
+
+    user_session = db.query(InterviewSession).filter(
+        InterviewSession.user_id == current_user["id"],
+        InterviewSession.group_interview_session_id == group_session.id,
+    ).first()
+    if not user_session:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No eres participante de esta sala.")
+
+    try:
+        round_uuid = PyUUID(round_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="round_id inválido.") from exc
+
+    round_item = db.query(GroupInterviewRound).filter(
+        GroupInterviewRound.id == round_uuid,
+        GroupInterviewRound.group_interview_session_id == group_session.id,
+    ).first()
+    if not round_item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ronda no encontrada.")
+
+    question = db.query(Question).filter(
+        Question.interview_session_id == user_session.id,
+        Question.round_index == round_item.round_index,
+        Question.group_session_id == group_session.id,
+    ).first()
+    if not question:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No hay pregunta registrada para esta ronda.")
+
+    audio_bytes = await audio_file.read()
+    await audio_file.close()
+    if not audio_bytes:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El archivo de audio está vacío.")
+
+    try:
+        speech_service = AzureSpeechService()
+        transcription: str = await run_in_threadpool(
+            speech_service.transcribe_audio,
+            audio_bytes,
+            audio_file.filename or "answer.wav",
+        )
+    except Exception as exc:
+        logger.exception("Error transcribiendo audio, sesión %s", session_code)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Error en transcripción: {exc}") from exc
+
+    if not transcription or not transcription.strip():
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No se detectó voz en el audio enviado.")
+
+    evaluation = Evaluation(
+        question_id=question.id,
+        interview_session_id=user_session.id,
+        user_answer_text=transcription,
+        status=EvaluationStatus.PENDING,
+    )
+    db.add(evaluation)
+    db.commit()
+    db.refresh(evaluation)
+
+    background_tasks.add_task(
+        run_evaluation_background,
+        evaluation_id=str(evaluation.id),
+        question_text=question.question_text,
+        expected_topics=question.expected_topics,
+        user_answer=transcription,
+    )
+
+    await _broadcast_group_event(
+        session_code,
+        {
+            "event": "answer_transcribed",
+            "user_id": str(current_user["id"]),
+            "round_id": round_id,
+            "evaluation_id": str(evaluation.id),
+        },
+    )
+
+    return {
+        "transcription": transcription,
+        "evaluation_id": str(evaluation.id),
+        "question_id": question.id,
+    }
+
+
+@router.get("/{session_code}/state")
+def get_group_session_state(
+    session_code: str,
+    response: Response,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Task-066-08: Obtener estado completo de sesión para reconexión.
+    Retorna la ronda activa actual o la última ronda para que participante pueda continuar.
+    """
+    service = GroupInterviewSessionService(db)
+    
+    try:
+        session = service.get_group_session_by_code(session_code)
+    except InterviewSessionNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=exc.message
+        ) from exc
+    
+    # Obtener ronda activa, o la última si no hay activa
+    active_round = db.query(GroupInterviewRound).filter(
+        GroupInterviewRound.group_interview_session_id == session.id,
+        GroupInterviewRound.status == GroupInterviewRoundStatus.ACTIVE,
+    ).first()
+    
+    current_round_data = None
+    if active_round:
+        current_round_data = {
+            "round_index": active_round.round_index,
+            "question_text": active_round.question_text,
+            "target_skill": active_round.target_skill,
+            "difficulty": active_round.difficulty,
+            "status": active_round.status.value if hasattr(active_round.status, "value") else str(active_round.status),
+        }
+    else:
+        # Si no hay ronda activa, obtener la última
+        last_round = db.query(GroupInterviewRound).filter(
+            GroupInterviewRound.group_interview_session_id == session.id,
+        ).order_by(GroupInterviewRound.round_index.desc()).first()
+        
+        if last_round:
+            current_round_data = {
+                "round_index": last_round.round_index,
+                "question_text": last_round.question_text,
+                "target_skill": last_round.target_skill,
+                "difficulty": last_round.difficulty,
+                "status": last_round.status.value if hasattr(last_round.status, "value") else str(last_round.status),
+            }
+    
+    # Contar total de rondas
+    total_rounds = db.query(GroupInterviewRound).filter(
+        GroupInterviewRound.group_interview_session_id == session.id,
+    ).count()
+    
+    response.status_code = status.HTTP_200_OK
+    return {
+        "session_code": session.session_code,
+        "status": session.status,
+        "role_id": str(session.role_id),
+        "current_round": current_round_data,
+        "total_rounds": total_rounds,
+    }

@@ -121,7 +121,9 @@ class GroupInterviewSessionService:
         Unir usuario a una sesión grupal y crear/reutilizar su InterviewSession individual.
 
         Returns:
-            tuple[group_session, interview_session]
+            tuple[group_session, interview_session, is_returning_participant]
+            is_returning_participant: True si el usuario ya tenía InterviewSession (reconexión),
+                                      False si se acaba de crear (primer ingreso).
         """
         user = self.user_repo.get_by_id(user_id)
         if not user:
@@ -135,13 +137,13 @@ class GroupInterviewSessionService:
         )
 
         if interview_session:
-            return group_session, interview_session
+            return group_session, interview_session, True  # participante que regresa
 
         interview_session = self.interview_session_repo.create_for_group(
             user_id=user_id,
             group_interview_session_id=group_session.id,
         )
-        return group_session, interview_session
+        return group_session, interview_session, False  # primer ingreso
 
     def delete_group_session(self, group_session_id: int, host_id: int) -> bool:
         """

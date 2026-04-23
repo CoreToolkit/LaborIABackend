@@ -24,3 +24,7 @@ class ElevenLabsClient:
 
     async def generate_speech(self, text: str) -> bytes:
         return await self.service.generate_speech(text)
+
+    async def generate_speech_with_retry(self, text: str) -> bytes:
+        """Genera audio TTS con reintentos limitados. Delega a ElevenLabsService."""
+        return await self.service.generate_speech_with_retry(text)
