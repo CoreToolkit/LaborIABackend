@@ -50,6 +50,13 @@ class AzureSpeechService:
         if language:
             speech_config.speech_recognition_language = language
 
+        # Dar hasta 15s de silencio inicial antes de rendirse (por defecto son 5s,
+        # lo que causa 422 cuando el usuario tarda en empezar a hablar).
+        speech_config.set_property(
+            speechsdk.PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs,
+            "15000",
+        )
+
         return speech_config
 
     def create_speech_recognizer(self, audio_config, language: str = None):
