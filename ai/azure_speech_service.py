@@ -50,11 +50,19 @@ class AzureSpeechService:
         if language:
             speech_config.speech_recognition_language = language
 
-        # Dar hasta 15s de silencio inicial antes de rendirse (por defecto son 5s,
-        # lo que causa 422 cuando el usuario tarda en empezar a hablar).
+        # Silencio inicial: dar hasta 15s antes de rendirse si el usuario
+        # tarda en empezar a hablar (por defecto son 5s → causa 422).
         speech_config.set_property(
             speechsdk.PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs,
             "15000",
+        )
+
+        # Silencio al final del habla: cuánto esperar tras la última palabra
+        # antes de cerrar el segmento. 2000ms da margen para pausas naturales
+        # entre frases sin cortar la respuesta prematuramente.
+        speech_config.set_property(
+            speechsdk.PropertyId.Speech_SegmentationSilenceTimeoutMs,
+            "2000",
         )
 
         return speech_config
@@ -212,11 +220,13 @@ class AzureSpeechService:
         filename: str = None,
         language: str = None,
     ) -> str:
+        """
+        Transcribe el audio completo usando reconocimiento continuo.
+        """
         temp_path = None
-        suffix = Path(filename or "").suffix
+        suffix = Path(filename or "").suffix or ".wav"
         audio_config = None
         recognizer = None
-        result = None
 
         try:
             with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
@@ -225,29 +235,59 @@ class AzureSpeechService:
 
             audio_config = speechsdk.audio.AudioConfig(filename=temp_path)
             recognizer = self.create_speech_recognizer(audio_config, language=language)
-            result = recognizer.recognize_once_async().get()
 
-            if result.reason == speechsdk.ResultReason.RecognizedSpeech:
-                return (result.text or "").strip()
+            all_text_parts: list[str] = []
+            done_event = False
+            recognition_error: Exception | None = None
 
-            if result.reason == speechsdk.ResultReason.NoMatch:
-                return ""
+            def on_recognized(evt):
+                result = getattr(evt, "result", None)
+                if result is None:
+                    return
+                if result.reason == speechsdk.ResultReason.RecognizedSpeech:
+                    text = (result.text or "").strip()
+                    if text:
+                        all_text_parts.append(text)
 
-            if result.reason == speechsdk.ResultReason.Canceled:
-                cancellation_details = result.cancellation_details
-                detail = f"Azure Speech canceló la transcripcion: {cancellation_details.reason}"
+            def on_session_stopped(_):
+                nonlocal done_event
+                done_event = True
 
-                if cancellation_details.reason == speechsdk.CancellationReason.Error:
-                    error_details = cancellation_details.error_details or "Sin detalles adicionales"
-                    detail = f"{detail}. {error_details}"
+            def on_canceled(evt):
+                nonlocal done_event, recognition_error
+                done_event = True
+                result = getattr(evt, "result", None)
+                if result is None:
+                    return
+                if result.reason == speechsdk.ResultReason.Canceled:
+                    cancellation = result.cancellation_details
+                    if cancellation.reason == speechsdk.CancellationReason.Error:
+                        detail = f"Azure Speech canceló la transcripcion: {cancellation.reason}. {cancellation.error_details or ''}"
+                        recognition_error = Exception(detail)
 
-                raise Exception(detail)
+            recognizer.recognized.connect(on_recognized)
+            recognizer.session_stopped.connect(on_session_stopped)
+            recognizer.canceled.connect(on_canceled)
 
-            return ""
+            recognizer.start_continuous_recognition_async().get()
+
+            # Esperar a que el SDK termine de procesar todo el archivo
+            timeout_s = 120
+            elapsed = 0.0
+            while not done_event and elapsed < timeout_s:
+                time.sleep(0.1)
+                elapsed += 0.1
+
+            recognizer.stop_continuous_recognition_async().get()
+
+            if recognition_error:
+                raise recognition_error
+
+            return " ".join(all_text_parts).strip()
+
         except Exception as e:
             raise Exception(f"Error en Azure Speech: {str(e)}")
         finally:
-            result = None
             recognizer = None
             audio_config = None
             gc.collect()
