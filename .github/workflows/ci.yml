@@ -193,7 +193,7 @@ jobs:
           EOF
         env:
           GATE_DECISION: ${{ steps.gate.outputs.gate_decision }}
-          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          IMAGE_NAME: $(echo "${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]'):${{ github.sha }}
 
       # ── Post comment on PR 
       - name: Post security summary on PR
