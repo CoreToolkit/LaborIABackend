@@ -1,5 +1,5 @@
 # tests/test_metrics_service.py
-# Tests para UserMetricsService: calculate_average_score, score_by_category, analyze_weak_areas
+# Tests para UserMetricsService: calculate_average_score, score_by_category, score_by_skill, analyze_weak_areas
 
 from unittest.mock import MagicMock, patch
 
@@ -15,6 +15,8 @@ def _make_evaluation(score: float, breakdown: dict | None = None, status=Evaluat
     ev.score = score
     ev.status = status
     ev.score_breakdown = breakdown
+    ev.question = MagicMock()
+    ev.question.category = None
     return ev
 
 
@@ -130,6 +132,87 @@ class TestScoreByCategory:
         assert result["correctness"] == 80.0
         assert result["examples"] == 40.0
         assert result["clarity"] == 85.0
+
+
+# ── score_by_skill ────────────────────────────────────────────────────────────
+
+class TestScoreBySkill:
+    def _service_with_evals(self, evaluations: list) -> UserMetricsService:
+        db = MagicMock()
+        service = UserMetricsService(db)
+        service._get_completed_evaluations = MagicMock(return_value=evaluations)
+        return service
+
+    def test_sin_evaluaciones_retorna_dict_vacio(self):
+        service = self._service_with_evals([])
+        assert service.score_by_skill(user_id=1) == {}
+
+    def test_promedia_por_skill_individual(self):
+        first = _make_evaluation(80.0)
+        first.question.category = "Python"
+        second = _make_evaluation(60.0)
+        second.question.category = "Python"
+        third = _make_evaluation(90.0)
+        third.question.category = "SQL"
+
+        service = self._service_with_evals([first, second, third])
+        result = service.score_by_skill(user_id=1)
+
+        assert result["Python"] == 70.0
+        assert result["SQL"] == 90.0
+
+    def test_ignora_evaluaciones_sin_categoria(self):
+        first = _make_evaluation(80.0)
+        first.question.category = "Python"
+        second = _make_evaluation(70.0)
+        second.question.category = None
+
+        service = self._service_with_evals([first, second])
+        result = service.score_by_skill(user_id=1)
+
+        assert result == {"Python": 80.0}
+
+
+# ── update_for_user ───────────────────────────────────────────────────────────
+
+class TestUpdateForUser:
+    def test_crea_metricas_si_no_existen(self):
+        db = MagicMock()
+        db.query.return_value.filter.return_value.first.return_value = None
+
+        service = UserMetricsService(db)
+        service.calculate_average_score = MagicMock(return_value=75.0)
+        service.score_by_skill = MagicMock(return_value={"Python": 80.0})
+        service._count_completed_interviews = MagicMock(return_value=2)
+
+        metrics = service.update_for_user(user_id=1)
+
+        assert metrics.user_id == 1
+        assert metrics.avg_score == 75.0
+        assert metrics.score_by_skill == {"Python": 80.0}
+        assert metrics.total_interviews == 2
+
+    def test_actualiza_metricas_existentes(self):
+        existing = MagicMock()
+        existing.user_id = 1
+        existing.avg_score = 50.0
+        existing.score_by_skill = {"Python": 60.0}
+        existing.total_interviews = 1
+
+        db = MagicMock()
+        db.query.return_value.filter.return_value.first.return_value = existing
+
+        service = UserMetricsService(db)
+        service.calculate_average_score = MagicMock(return_value=82.0)
+        service.score_by_skill = MagicMock(return_value={"Python": 85.0, "SQL": 78.0})
+        service._count_completed_interviews = MagicMock(return_value=3)
+
+        metrics = service.update_for_user(user_id=1)
+
+        assert metrics is existing
+        assert existing.avg_score == 82.0
+        assert existing.score_by_skill == {"Python": 85.0, "SQL": 78.0}
+        assert existing.total_interviews == 3
 
 
 # ── analyze_weak_areas ────────────────────────────────────────────────────────

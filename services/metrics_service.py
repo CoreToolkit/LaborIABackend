@@ -17,7 +17,8 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from sqlalchemy.orm import Session
+from sqlalchemy import func as sqlfunc
+from sqlalchemy.orm import Session, joinedload
 
 from models.evaluation import Evaluation, EvaluationStatus
 from models.interview_session import InterviewSession
@@ -32,6 +33,7 @@ class UserMetricsService:
         """Retorna evaluaciones completadas con score válido (>= 0) del usuario."""
         return (
             self.db.query(Evaluation)
+            .options(joinedload(Evaluation.question))
             .join(InterviewSession, Evaluation.interview_session_id == InterviewSession.id)
             .filter(
                 InterviewSession.user_id == user_id,
@@ -39,6 +41,18 @@ class UserMetricsService:
                 Evaluation.score >= 0,
             )
             .all()
+        )
+
+    def _count_completed_interviews(self, user_id: int) -> int:
+        return (
+            self.db.query(sqlfunc.count(sqlfunc.distinct(Evaluation.interview_session_id)))
+            .join(InterviewSession, Evaluation.interview_session_id == InterviewSession.id)
+            .filter(
+                InterviewSession.user_id == user_id,
+                Evaluation.status == EvaluationStatus.COMPLETED,
+            )
+            .scalar()
+            or 0
         )
 
     def calculate_average_score(self, user_id: int) -> float:
@@ -82,6 +96,61 @@ class UserMetricsService:
             for category, scores in category_scores.items()
             if scores
         }
+
+    def score_by_skill(self, user_id: int) -> dict[str, float]:
+        """
+        Agrupa el score promedio por skill individual usando Question.category.
+        Retorna { skill: avg_score } para cada skill con al menos una evaluación.
+        """
+        evaluations = self._get_completed_evaluations(user_id)
+        if not evaluations:
+            return {}
+
+        skill_scores: dict[str, list[float]] = defaultdict(list)
+
+        for evaluation in evaluations:
+            skill = getattr(evaluation.question, "category", None)
+            if not skill:
+                continue
+            if evaluation.score is None or evaluation.score < 0:
+                continue
+            skill_scores[str(skill)].append(float(evaluation.score))
+
+        return {
+            skill: round(sum(scores) / len(scores), 2)
+            for skill, scores in skill_scores.items()
+            if scores
+        }
+
+    def update_for_user(self, user_id: int):
+        """
+        Recalcula y persiste las métricas agregadas del usuario.
+
+        Retorna el registro UserMetrics actualizado o creado.
+        """
+        from models.user_metrics import UserMetrics
+
+        avg_score = self.calculate_average_score(user_id)
+        score_by_skill = self.score_by_skill(user_id)
+        total_interviews = self._count_completed_interviews(user_id)
+
+        metrics = self.db.query(UserMetrics).filter(UserMetrics.user_id == user_id).first()
+        if metrics:
+            metrics.avg_score = avg_score
+            metrics.score_by_skill = score_by_skill
+            metrics.total_interviews = total_interviews
+        else:
+            metrics = UserMetrics(
+                user_id=user_id,
+                avg_score=avg_score,
+                score_by_skill=score_by_skill,
+                total_interviews=total_interviews,
+            )
+            self.db.add(metrics)
+
+        self.db.commit()
+        self.db.refresh(metrics)
+        return metrics
 
     def analyze_weak_areas(
         self,
