@@ -2,9 +2,12 @@ name: CI · Security Gate · Deploy
 
 on:
   push:
-    branches: [main, develop]
   pull_request:
-    branches: [main, develop]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
 
 env:
   IMAGE_NAME: ${{ github.repository }}:${{ github.sha }}
