@@ -51,6 +51,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # ── Checkout Sentinel desde su rama activa ───────────────────────────
+      - name: Checkout Sentinel
+        uses: actions/checkout@v4
+        with:
+          repository: DannielEU/Sentinel-AI-CD
+          ref: feature/SecurityAndPresentability
+          path: Sentinel-AI-CD
+
       # ── Build the app image ──────────────────────────────────────────────
       - name: Build Docker image
         run: docker build -t $IMAGE_NAME .
