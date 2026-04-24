@@ -138,6 +138,7 @@ class GroupInterviewOrchestratorService:
             target_skill=target_skill,
             difficulty=effective_difficulty,
             previous_questions=previous_questions,
+            round_index=len(previous_questions),
         )
 
         # AB#328: medir tiempo de generación de texto
@@ -146,7 +147,7 @@ class GroupInterviewOrchestratorService:
             generated_question = await self.azure_client.ask(
                 question=prompt,
                 system_prompt=system_prompt,
-                temperature=0.2,
+                temperature=0.8,
                 max_tokens=180,
             )
         except Exception as exc:
