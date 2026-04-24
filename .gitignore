@@ -8,4 +8,5 @@ __pycache__/
 htmlcov/
 .pytest_cache/
 .*.db
+*.db
 reports/
