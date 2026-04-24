@@ -2,12 +2,9 @@ name: CI · Security Gate · Deploy
 
 on:
   push:
+    branches: [main, develop]
   pull_request:
-
-permissions:
-  contents: read
-  issues: write
-  pull-requests: write
+    branches: [main, develop]
 
 env:
   IMAGE_NAME: ${{ github.repository }}:${{ github.sha }}
@@ -62,9 +59,14 @@ jobs:
           ref: feature/SecurityAndPresentability
           path: Sentinel-AI-CD
 
+      - name: Set lowercase image name
+        id: vars
+        run: |
+          IMAGE_NAME=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "image_name=${IMAGE_NAME}:${{ github.sha }}" >> $GITHUB_OUTPUT
       # ── Build the app image ──────────────────────────────────────────────
       - name: Build Docker image
-        run: docker build -t $IMAGE_NAME .
+        run: docker build -t ${{ steps.vars.outputs.image_name }} .
 
       # ── Install Trivy ────────────────────────────────────────────────────
       - name: Install Trivy
@@ -79,13 +81,13 @@ jobs:
             --format json \
             --output trivy_report.json \
             --exit-code 0 \
-            $IMAGE_NAME
+            ${{ steps.vars.outputs.image_name }}
 
           # Human-readable summary in the job log
           trivy image \
             --format table \
             --exit-code 0 \
-            $IMAGE_NAME
+            ${{ steps.vars.outputs.image_name }}
 
       # ── Start Sentinel gate (AI_DISABLED=true → Ollama off) ──────────────
       - name: Start Sentinel gate
@@ -110,7 +112,7 @@ jobs:
           set +e
           python3 Sentinel-AI-CD/pipeline/trivy_to_gate.py \
             --report trivy_report.json \
-            --image  "$IMAGE_NAME" \
+            --image  "${{ steps.vars.outputs.image_name }}" \
             --gate   "$GATE_URL" \
             --dockerfile ./Dockerfile
           GATE_EXIT=$?
@@ -196,7 +198,7 @@ jobs:
           EOF
         env:
           GATE_DECISION: ${{ steps.gate.outputs.gate_decision }}
-          IMAGE_NAME: $(echo "${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]'):${{ github.sha }}
+          IMAGE_NAME: $(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]'):${{ github.sha }}
 
       # ── Post comment on PR 
       - name: Post security summary on PR
