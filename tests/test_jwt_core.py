@@ -1,5 +1,5 @@
 import pytest
-from jose import jwt as jose_jwt
+import jwt as pyjwt
 
 from core import jwt as core_jwt
 
@@ -29,7 +29,7 @@ def test_access_token_expired(monkeypatch):
 
 def test_decode_invalid_signature(monkeypatch):
     monkeypatch.setenv("JWT_SECRET", "secret-key")
-    forged = jose_jwt.encode({"email": "user@example.com"}, "other-secret", algorithm="HS256")
+    forged = pyjwt.encode({"email": "user@example.com"}, "other-secret", algorithm="HS256")
 
     with pytest.raises(Exception):
         core_jwt.decode_token(forged)

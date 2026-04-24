@@ -1,4 +1,5 @@
-from jose import JWTError, jwt
+import jwt as pyjwt
+from jwt.exceptions import InvalidTokenError
 from fastapi import HTTPException, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from datetime import datetime, timedelta, timezone
@@ -16,20 +17,20 @@ def create_token(data: dict) -> str:
     payload = data.copy()
     payload["jti"] = str(uuid.uuid4())   # unique token ID for blacklisting
     payload["exp"] = datetime.now(timezone.utc) + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
-    return jwt.encode(payload, os.getenv("JWT_SECRET"), algorithm=ALGORITHM)
+    return pyjwt.encode(payload, os.getenv("JWT_SECRET"), algorithm=ALGORITHM)
 
 
 def create_refresh_token(data: dict) -> str:
     payload = data.copy()
     payload["type"] = "refresh"
     payload["exp"] = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
-    return jwt.encode(payload, os.getenv("JWT_SECRET"), algorithm=ALGORITHM)
+    return pyjwt.encode(payload, os.getenv("JWT_SECRET"), algorithm=ALGORITHM)
 
 
 def decode_token(token: str) -> dict:
     try:
-        return jwt.decode(token, os.getenv("JWT_SECRET"), algorithms=[ALGORITHM])
-    except JWTError:
+        return pyjwt.decode(token, os.getenv("JWT_SECRET"), algorithms=[ALGORITHM])
+    except InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 
