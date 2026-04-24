@@ -51,19 +51,12 @@ class TestGetUserMetrics:
         from unittest.mock import patch
         with patch("api.metrics.UserMetricsService") as MockService:
             instance = MockService.return_value
-            instance.calculate_average_score.return_value = 0.0
-            instance.score_by_category.return_value = {}
-
-            # Simular que db.refresh actualiza el objeto creado
             created_metrics = MagicMock()
             created_metrics.avg_score = 0.0
             created_metrics.score_by_skill = {}
             created_metrics.total_interviews = 0
             created_metrics.last_updated = None
-            db.refresh.side_effect = lambda obj: None
-
-            # Hacer que el segundo query (después del add) devuelva el objeto
-            db.query.return_value.filter.return_value.first.side_effect = [None, created_metrics]
+            instance.update_for_user.return_value = created_metrics
 
             client = _make_app_with_db(db)
             response = client.get("/api/metrics/user")
@@ -82,13 +75,11 @@ class TestGetUserMetrics:
         existing.last_updated = "2026-05-01 10:00:00"
 
         db = self._make_db(existing_metrics=existing, total_interviews=3)
-        db.refresh.side_effect = lambda obj: None
 
         from unittest.mock import patch
         with patch("api.metrics.UserMetricsService") as MockService:
             instance = MockService.return_value
-            instance.calculate_average_score.return_value = 78.5
-            instance.score_by_category.return_value = {"correctness": 80.0}
+            instance.update_for_user.return_value = existing
 
             client = _make_app_with_db(db)
             response = client.get("/api/metrics/user")
@@ -107,13 +98,11 @@ class TestGetUserMetrics:
         existing.last_updated = "2026-05-01"
 
         db = self._make_db(existing_metrics=existing, total_interviews=1)
-        db.refresh.side_effect = lambda obj: None
 
         from unittest.mock import patch
         with patch("api.metrics.UserMetricsService") as MockService:
             instance = MockService.return_value
-            instance.calculate_average_score.return_value = 50.0
-            instance.score_by_category.return_value = {}
+            instance.update_for_user.return_value = existing
 
             client = _make_app_with_db(db)
             response = client.get("/api/metrics/user")

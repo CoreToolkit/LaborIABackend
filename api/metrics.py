@@ -10,7 +10,6 @@ from sqlalchemy.orm import Session
 
 from core.database import get_db
 from core.jwt import get_current_user
-from models.user_metrics import UserMetrics
 from services.metrics_service import UserMetricsService
 
 router = APIRouter(
@@ -39,40 +38,7 @@ def get_user_metrics(
     user_id: int = current_user["id"]
     service = UserMetricsService(db)
 
-    avg_score = service.calculate_average_score(user_id)
-    score_by_skill = service.score_by_category(user_id)
-
-    # Contar entrevistas únicas con evaluaciones completadas
-    from models.evaluation import Evaluation, EvaluationStatus
-    from models.interview_session import InterviewSession
-    from sqlalchemy import func as sqlfunc
-
-    total_interviews = (
-        db.query(sqlfunc.count(sqlfunc.distinct(Evaluation.interview_session_id)))
-        .join(InterviewSession, Evaluation.interview_session_id == InterviewSession.id)
-        .filter(
-            InterviewSession.user_id == user_id,
-            Evaluation.status == EvaluationStatus.COMPLETED,
-        )
-        .scalar()
-    ) or 0
-
-    # Upsert en user_metrics
-    metrics = db.query(UserMetrics).filter(UserMetrics.user_id == user_id).first()
-    if metrics:
-        metrics.avg_score = avg_score
-        metrics.score_by_skill = score_by_skill
-        metrics.total_interviews = total_interviews
-    else:
-        metrics = UserMetrics(
-            user_id=user_id,
-            avg_score=avg_score,
-            score_by_skill=score_by_skill,
-            total_interviews=total_interviews,
-        )
-        db.add(metrics)
-    db.commit()
-    db.refresh(metrics)
+    metrics = service.update_for_user(user_id)
 
     return UserMetricsResponse(
         avg_score=float(metrics.avg_score) if metrics.avg_score is not None else 0.0,

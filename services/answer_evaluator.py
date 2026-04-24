@@ -43,6 +43,8 @@ from ai.azure_openai_client import AzureOpenAIClient
 from ai.azure_openai_service import AzureOpenAIService
 from core.database import SessionLocal
 from models.evaluation import Evaluation, EvaluationStatus
+from models.interview_session import InterviewSession
+from services.metrics_service import UserMetricsService
 from services.interview_flow import (
     EVENT_EVALUATION_RESOLVED,
     EVALUATION_COMPLETED,
@@ -265,6 +267,23 @@ def run_evaluation_background(
 
         db.query(Evaluation).filter(Evaluation.id == evaluation_id).update(update_data)
         db.commit()
+
+        if resolved_state == EVALUATION_COMPLETED:
+            try:
+                evaluation = (
+                    db.query(Evaluation)
+                    .join(InterviewSession, Evaluation.interview_session_id == InterviewSession.id)
+                    .filter(Evaluation.id == evaluation_id)
+                    .first()
+                )
+                if evaluation and evaluation.interview_session:
+                    UserMetricsService(db).update_for_user(evaluation.interview_session.user_id)
+            except Exception as metrics_exc:
+                logger.exception(
+                    "run_evaluation_background: metrics update failed for evaluation_id=%s — %s",
+                    evaluation_id,
+                    metrics_exc,
+                )
 
     except Exception as exc:
         logger.error(
