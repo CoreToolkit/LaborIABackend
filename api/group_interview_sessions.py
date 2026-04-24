@@ -399,6 +399,7 @@ async def submit_audio_answer(
             speech_service.transcribe_audio,
             audio_bytes,
             audio_file.filename or "answer.wav",
+            language="es-CO",
         )
     except Exception as exc:
         logger.exception("Error transcribiendo audio, sesión %s", session_code)
