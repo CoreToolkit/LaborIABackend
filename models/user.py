@@ -20,3 +20,6 @@ class User(Base):
     interview_sessions = relationship("InterviewSession", back_populates="user")
     group_interview_sessions_hosted = relationship("GroupInterviewSession", back_populates="host")
     match_results = relationship("MatchResult", back_populates="user")
+    user_metrics = relationship("UserMetrics", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    recommendations = relationship("Recommendation", back_populates="user", cascade="all, delete-orphan")
+    user_badges = relationship("UserBadge", back_populates="user", cascade="all, delete-orphan")
