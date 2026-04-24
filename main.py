@@ -30,6 +30,7 @@ from api import azure_speech
 from api import elevenlabs
 from api import matching
 from api.evaluations import router as evaluations_router
+from api.metrics import router as metrics_router
 from middleware.auth_middleware import AuthMiddleware
 # Carga variables desde .env
 
@@ -90,6 +91,7 @@ app.include_router(matching.router, prefix="/api")
 app.include_router(ollama.router, prefix="/api")
 app.include_router(azure_openai.router, prefix="/api")
 app.include_router(evaluations_router)
+app.include_router(metrics_router, prefix="/api")
 app.include_router(azure_speech.router, prefix="/api")
 app.include_router(elevenlabs.router, prefix="/api")
 app.include_router(websockets.router, prefix="/api")
