@@ -76,7 +76,7 @@ app.add_middleware(
         "/api/ai/ollama/ask",
         "/api/ai/azure-openai/health",
         "/api/ai/azure-openai/ask",
-        "/api/ws",  # WebSocket no requiere JWT en header
+        "/api/ws",
     ],
 )
 
