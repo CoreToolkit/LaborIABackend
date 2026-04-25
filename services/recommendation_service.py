@@ -32,6 +32,14 @@ _REASON_SYSTEM_PROMPT = (
 )
 
 
+def _detect_skill_gaps_top3(normalized_user_skills: set[str], role) -> list[dict]:
+    """Retorna top 3 skill gaps (name, importance_weight) para el rol dado."""
+    all_gaps = MatchingService._detect_skill_gaps_for_role(normalized_user_skills, role)
+    # Ordenar por importance_weight desc y tomar top 3
+    sorted_gaps = sorted(all_gaps, key=lambda g: g["importance_weight"], reverse=True)
+    return [{"name": g["name"], "importance_weight": g["importance_weight"]} for g in sorted_gaps[:3]]
+
+
 def _priority_from_gaps(skill_gaps: list[dict]) -> str:
     """Determina prioridad según cantidad y peso de skill gaps."""
     if not skill_gaps:
