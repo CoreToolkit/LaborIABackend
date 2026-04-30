@@ -576,6 +576,8 @@ def test_get_matching_recommendations_returns_expected_response_structure():
         "estimated_salary_min_cop",
         "estimated_salary_max_cop",
         "active",
+        "skill_gaps",
+        "reason",
     }
 
 
@@ -601,3 +603,70 @@ def test_get_matching_recommendations_includes_basic_role_information():
     assert item["estimated_salary_min_cop"] == "4000000.00"
     assert item["estimated_salary_max_cop"] == "6500000.00"
     assert item["active"] is True
+
+
+def test_get_matching_recommendations_includes_skill_gaps_and_reason():
+    """TASK-027-06: skill_gaps y reason aparecen en cada recomendación."""
+    user = _create_user()
+    role = _create_role(name="DevOps Engineer")
+    _create_match_result(user.id, role.id, "75.00")
+
+    response = client.get("/api/matching/recommendations", headers=_auth_headers_for_user(user))
+
+    assert response.status_code == 200
+    item = response.json()["recommendations"][0]
+    assert "skill_gaps" in item
+    assert "reason" in item
+    assert isinstance(item["skill_gaps"], list)
+    assert isinstance(item["reason"], str)
+    assert len(item["reason"]) > 0
+
+
+def test_get_matching_recommendations_skill_gaps_max_3():
+    """skill_gaps retorna máximo 3 items."""
+    user = _create_user()
+    role = _create_role(name="Full Stack Developer")
+
+    # Crear 5 tecnologías requeridas que el usuario no tiene
+    for i in range(5):
+        tech = _create_technology(f"Tech{i}-{uuid.uuid4().hex[:4]}")
+        _create_role_skill(role.id, tech.id, importance_weight=10 - i)
+
+    _create_match_result(user.id, role.id, "30.00")
+
+    response = client.get("/api/matching/recommendations", headers=_auth_headers_for_user(user))
+
+    assert response.status_code == 200
+    item = response.json()["recommendations"][0]
+    assert len(item["skill_gaps"]) <= 3
+
+
+def test_get_matching_recommendations_skill_gaps_structure():
+    """Cada skill_gap tiene name e importance_weight."""
+    user = _create_user()
+    role = _create_role(name="Backend Developer")
+    tech = _create_technology(f"Python-{uuid.uuid4().hex[:4]}")
+    _create_role_skill(role.id, tech.id, importance_weight=8)
+    _create_match_result(user.id, role.id, "50.00")
+
+    response = client.get("/api/matching/recommendations", headers=_auth_headers_for_user(user))
+
+    assert response.status_code == 200
+    item = response.json()["recommendations"][0]
+    if item["skill_gaps"]:
+        gap = item["skill_gaps"][0]
+        assert "name" in gap
+        assert "importance_weight" in gap
+
+
+def test_get_matching_recommendations_reason_contains_role_name():
+    """reason incluye el nombre del rol (fallback genérico)."""
+    user = _create_user()
+    role = _create_role(name="Data Scientist")
+    _create_match_result(user.id, role.id, "68.00")
+
+    response = client.get("/api/matching/recommendations", headers=_auth_headers_for_user(user))
+
+    assert response.status_code == 200
+    item = response.json()["recommendations"][0]
+    assert "Data Scientist" in item["reason"]
