@@ -274,3 +274,57 @@ class TestAnalyzeWeakAreas:
         # 59.9 < 60 → débil; 60.0 no es < 60 → no débil
         assert len(result) == 1
         assert result[0]["skill"] == "correctness"
+
+
+# ── get_score_timeline ───────────────────────────────────────────────────────
+
+class TestGetScoreTimeline:
+    def test_retorna_timeline_semanal_agregado(self):
+        db = MagicMock()
+        db.bind = MagicMock()
+        db.bind.dialect = MagicMock()
+        db.bind.dialect.name = "postgresql"
+
+        rows = [
+            ("2026-03-30", 72.5, 2),
+            ("2026-04-06", 80.0, 3),
+        ]
+        db.query.return_value.join.return_value.filter.return_value.group_by.return_value.order_by.return_value.all.return_value = rows
+
+        service = UserMetricsService(db)
+        result = service.get_score_timeline(user_id=1, granularity="week")
+
+        assert result == [
+            {"period": "2026-03-30", "avg_score": 72.5, "count": 2},
+            {"period": "2026-04-06", "avg_score": 80.0, "count": 3},
+        ]
+
+    def test_retorna_timeline_mensual_agregado(self):
+        db = MagicMock()
+        db.bind = MagicMock()
+        db.bind.dialect = MagicMock()
+        db.bind.dialect.name = "postgresql"
+
+        rows = [
+            ("2026-03", 68.2, 4),
+            ("2026-04", 79.75, 5),
+        ]
+        db.query.return_value.join.return_value.filter.return_value.group_by.return_value.order_by.return_value.all.return_value = rows
+
+        service = UserMetricsService(db)
+        result = service.get_score_timeline(user_id=1, granularity="month")
+
+        assert result == [
+            {"period": "2026-03", "avg_score": 68.2, "count": 4},
+            {"period": "2026-04", "avg_score": 79.75, "count": 5},
+        ]
+
+    def test_sin_historial_retorna_lista_vacia(self):
+        db = MagicMock()
+        db.bind = MagicMock()
+        db.bind.dialect = MagicMock()
+        db.bind.dialect.name = "sqlite"
+        db.query.return_value.join.return_value.filter.return_value.group_by.return_value.order_by.return_value.all.return_value = []
+
+        service = UserMetricsService(db)
+        assert service.get_score_timeline(user_id=1, granularity="week") == []

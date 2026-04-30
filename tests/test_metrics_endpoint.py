@@ -115,6 +115,50 @@ class TestGetUserMetrics:
         assert "last_updated" in data
 
 
+class TestGetMetricsTimeline:
+    def test_timeline_week_retorna_periodos(self):
+        db = MagicMock()
+
+        from unittest.mock import patch
+        with patch("api.metrics.UserMetricsService") as MockService:
+            instance = MockService.return_value
+            instance.get_score_timeline.return_value = [
+                {"period": "2026-03-30", "avg_score": 72.5, "count": 2},
+                {"period": "2026-04-06", "avg_score": 80.0, "count": 3},
+            ]
+
+            client = _make_app_with_db(db)
+            response = client.get("/api/metrics/timeline?granularity=week")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 2
+        assert data[0]["period"] == "2026-03-30"
+        assert data[0]["avg_score"] == 72.5
+        assert data[0]["count"] == 2
+
+    def test_timeline_sin_historial_retorna_lista_vacia(self):
+        db = MagicMock()
+
+        from unittest.mock import patch
+        with patch("api.metrics.UserMetricsService") as MockService:
+            instance = MockService.return_value
+            instance.get_score_timeline.return_value = []
+
+            client = _make_app_with_db(db)
+            response = client.get("/api/metrics/timeline")
+
+        assert response.status_code == 200
+        assert response.json() == []
+
+    def test_timeline_granularity_invalida_retorna_422(self):
+        db = MagicMock()
+        client = _make_app_with_db(db)
+
+        response = client.get("/api/metrics/timeline?granularity=day")
+        assert response.status_code == 422
+
+
 # ── GET /evaluations/history/user ─────────────────────────────────────────────
 
 class TestGetEvaluationHistory:

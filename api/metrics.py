@@ -5,6 +5,9 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 from fastapi import APIRouter, Depends
+from typing import Literal
+
+from fastapi import Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -23,6 +26,12 @@ class UserMetricsResponse(BaseModel):
     score_by_skill: dict
     total_interviews: int
     last_updated: str | None
+
+
+class TimelinePointResponse(BaseModel):
+    period: str
+    avg_score: float
+    count: int
 
 
 @router.get("/user", response_model=UserMetricsResponse)
@@ -46,3 +55,22 @@ def get_user_metrics(
         total_interviews=metrics.total_interviews,
         last_updated=str(metrics.last_updated) if metrics.last_updated else None,
     )
+
+
+@router.get("/timeline", response_model=list[TimelinePointResponse])
+def get_metrics_timeline(
+    granularity: Literal["week", "month"] = Query(default="week"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Retorna la evolución temporal del score del usuario.
+    granularity:
+      - week: agrupación por semana
+      - month: agrupación por mes
+    """
+    user_id: int = current_user["id"]
+    service = UserMetricsService(db)
+    timeline = service.get_score_timeline(user_id=user_id, granularity=granularity)
+
+    return [TimelinePointResponse(**item) for item in timeline]

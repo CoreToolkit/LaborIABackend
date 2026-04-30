@@ -55,6 +55,56 @@ class UserMetricsService:
             or 0
         )
 
+    def get_score_timeline(self, user_id: int, granularity: str = "week") -> list[dict]:
+        """
+        Retorna la evolución temporal del score del usuario agregada por semana o mes.
+        Ejecuta una sola query SQL agregada (sin N+1).
+        """
+        if granularity not in {"week", "month"}:
+            raise ValueError("granularity must be 'week' or 'month'")
+
+        dialect_name = (self.db.bind.dialect.name if self.db.bind else "").lower()
+
+        if dialect_name == "sqlite":
+            period_expr = (
+                sqlfunc.strftime("%Y-W%W", Evaluation.completed_at)
+                if granularity == "week"
+                else sqlfunc.strftime("%Y-%m", Evaluation.completed_at)
+            )
+        else:
+            period_expr = (
+                sqlfunc.to_char(sqlfunc.date_trunc("week", Evaluation.completed_at), "YYYY-MM-DD")
+                if granularity == "week"
+                else sqlfunc.to_char(sqlfunc.date_trunc("month", Evaluation.completed_at), "YYYY-MM")
+            )
+
+        rows = (
+            self.db.query(
+                period_expr.label("period"),
+                sqlfunc.avg(Evaluation.score).label("avg_score"),
+                sqlfunc.count(Evaluation.id).label("count"),
+            )
+            .join(InterviewSession, Evaluation.interview_session_id == InterviewSession.id)
+            .filter(
+                InterviewSession.user_id == user_id,
+                Evaluation.status == EvaluationStatus.COMPLETED,
+                Evaluation.score >= 0,
+                Evaluation.completed_at.isnot(None),
+            )
+            .group_by(period_expr)
+            .order_by(period_expr.asc())
+            .all()
+        )
+
+        return [
+            {
+                "period": str(period),
+                "avg_score": round(float(avg_score), 2),
+                "count": int(count),
+            }
+            for period, avg_score, count in rows
+        ]
+
     def calculate_average_score(self, user_id: int) -> float:
         """
         Calcula el score promedio del usuario sobre evaluaciones completadas.
