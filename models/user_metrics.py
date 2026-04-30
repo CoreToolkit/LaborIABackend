@@ -13,6 +13,7 @@ class UserMetrics(Base):
     total_interviews = Column(Integer, nullable=False, default=0)
     avg_score = Column(Numeric(5, 2), nullable=True)
     score_by_skill = Column(JSON, nullable=True)
+    employability_score = Column(Numeric(5, 2), nullable=True)
     last_updated = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     user = relationship("User", back_populates="user_metrics")

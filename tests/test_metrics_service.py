@@ -176,15 +176,19 @@ class TestScoreBySkill:
 # ── update_for_user ───────────────────────────────────────────────────────────
 
 class TestUpdateForUser:
-    def test_crea_metricas_si_no_existen(self):
+    def _service_base(self, existing_metrics=None) -> UserMetricsService:
         db = MagicMock()
-        db.query.return_value.filter.return_value.first.return_value = None
-
+        db.query.return_value.filter.return_value.first.return_value = existing_metrics
         service = UserMetricsService(db)
         service.calculate_average_score = MagicMock(return_value=75.0)
         service.score_by_skill = MagicMock(return_value={"Python": 80.0})
         service._count_completed_interviews = MagicMock(return_value=2)
+        service._calculate_profile_completeness = MagicMock(return_value=70.0)
+        service._calculate_avg_match_score = MagicMock(return_value=60.0)
+        return service
 
+    def test_crea_metricas_si_no_existen(self):
+        service = self._service_base(existing_metrics=None)
         metrics = service.update_for_user(user_id=1)
 
         assert metrics.user_id == 1
@@ -195,14 +199,8 @@ class TestUpdateForUser:
     def test_actualiza_metricas_existentes(self):
         existing = MagicMock()
         existing.user_id = 1
-        existing.avg_score = 50.0
-        existing.score_by_skill = {"Python": 60.0}
-        existing.total_interviews = 1
 
-        db = MagicMock()
-        db.query.return_value.filter.return_value.first.return_value = existing
-
-        service = UserMetricsService(db)
+        service = self._service_base(existing_metrics=existing)
         service.calculate_average_score = MagicMock(return_value=82.0)
         service.score_by_skill = MagicMock(return_value={"Python": 85.0, "SQL": 78.0})
         service._count_completed_interviews = MagicMock(return_value=3)
@@ -213,6 +211,137 @@ class TestUpdateForUser:
         assert existing.avg_score == 82.0
         assert existing.score_by_skill == {"Python": 85.0, "SQL": 78.0}
         assert existing.total_interviews == 3
+
+    def test_persiste_employability_score(self):
+        service = self._service_base(existing_metrics=None)
+        # 75.0 * 0.60 + 70.0 * 0.20 + 60.0 * 0.20 = 45 + 14 + 12 = 71.0
+        metrics = service.update_for_user(user_id=1)
+        assert metrics.employability_score == 71.0
+
+    def test_employability_score_actualizado_en_existentes(self):
+        existing = MagicMock()
+        existing.user_id = 1
+        service = self._service_base(existing_metrics=existing)
+
+        service.update_for_user(user_id=1)
+
+        assert existing.employability_score == 71.0
+
+
+# ── _calculate_profile_completeness ──────────────────────────────────────────
+
+class TestCalculateProfileCompleteness:
+    def _service_with_profile(self, profile_mock) -> UserMetricsService:
+        db = MagicMock()
+        db.query.return_value.filter.return_value.first.return_value = profile_mock
+        return UserMetricsService(db)
+
+    def test_sin_perfil_retorna_cero(self):
+        service = self._service_with_profile(None)
+        assert service._calculate_profile_completeness(user_id=1) == 0.0
+
+    def test_perfil_vacio_retorna_cero(self):
+        profile = MagicMock()
+        for field in ["full_name", "career", "university", "graduation_date",
+                      "description", "english_level", "preferred_location",
+                      "preferred_employment_type", "salary_expectation"]:
+            setattr(profile, field, None)
+        profile.experiences = []
+        profile.skills = []
+
+        service = self._service_with_profile(profile)
+        assert service._calculate_profile_completeness(user_id=1) == 0.0
+
+    def test_perfil_completo_retorna_100(self):
+        profile = MagicMock()
+        for field in ["full_name", "career", "university", "graduation_date",
+                      "description", "english_level", "preferred_location",
+                      "preferred_employment_type", "salary_expectation"]:
+            setattr(profile, field, "filled")
+        profile.experiences = [MagicMock()]
+        profile.skills = [MagicMock()]
+
+        service = self._service_with_profile(profile)
+        assert service._calculate_profile_completeness(user_id=1) == 100.0
+
+    def test_perfil_parcial_retorna_porcentaje_correcto(self):
+        profile = MagicMock()
+        profile.full_name = "Juan"
+        profile.career = "Ingeniería"
+        for field in ["university", "graduation_date", "description", "english_level",
+                      "preferred_location", "preferred_employment_type", "salary_expectation"]:
+            setattr(profile, field, None)
+        profile.experiences = []
+        profile.skills = []
+
+        service = self._service_with_profile(profile)
+        # 2 de 11 → 18.18%
+        assert service._calculate_profile_completeness(user_id=1) == round(2 / 11 * 100, 2)
+
+
+# ── _calculate_avg_match_score ────────────────────────────────────────────────
+
+class TestCalculateAvgMatchScore:
+    def test_sin_matches_retorna_cero(self):
+        db = MagicMock()
+        db.query.return_value.filter.return_value.scalar.return_value = None
+        service = UserMetricsService(db)
+        assert service._calculate_avg_match_score(user_id=1) == 0.0
+
+    def test_con_matches_retorna_promedio(self):
+        db = MagicMock()
+        db.query.return_value.filter.return_value.scalar.return_value = 72.50
+        service = UserMetricsService(db)
+        assert service._calculate_avg_match_score(user_id=1) == 72.5
+
+
+# ── calculate_employability_score ─────────────────────────────────────────────
+
+class TestCalculateEmployabilityScore:
+    def _service(self, avg=0.0, completeness=0.0, match=0.0, interviews=0) -> UserMetricsService:
+        db = MagicMock()
+        service = UserMetricsService(db)
+        service.calculate_average_score = MagicMock(return_value=avg)
+        service._calculate_profile_completeness = MagicMock(return_value=completeness)
+        service._calculate_avg_match_score = MagicMock(return_value=match)
+        service._count_completed_interviews = MagicMock(return_value=interviews)
+        return service
+
+    def test_formula_correcta(self):
+        # 80*0.60 + 80*0.20 + 60*0.20 = 48 + 16 + 12 = 76
+        service = self._service(avg=80.0, completeness=80.0, match=60.0, interviews=3)
+        result = service.calculate_employability_score(user_id=1)
+        assert result["score"] == 76.0
+
+    def test_sin_datos_retorna_cero(self):
+        service = self._service()
+        result = service.calculate_employability_score(user_id=1)
+        assert result["score"] == 0.0
+
+    def test_retorna_breakdown_completo(self):
+        service = self._service(avg=80.0, completeness=80.0, match=65.0, interviews=3)
+        result = service.calculate_employability_score(user_id=1)
+        assert "breakdown" in result
+        assert result["breakdown"]["interview_score"] == 80.0
+        assert result["breakdown"]["profile_completeness"] == 80.0
+        assert result["breakdown"]["avg_match_score"] == 65.0
+
+    def test_retorna_total_interviews(self):
+        service = self._service(interviews=5)
+        result = service.calculate_employability_score(user_id=1)
+        assert result["total_interviews"] == 5
+
+    def test_sin_entrevistas_interview_score_es_cero(self):
+        service = self._service(avg=0.0, completeness=100.0, match=70.0, interviews=0)
+        result = service.calculate_employability_score(user_id=1)
+        # 0*0.60 + 100*0.20 + 70*0.20 = 0 + 20 + 14 = 34
+        assert result["score"] == 34.0
+        assert result["breakdown"]["interview_score"] == 0.0
+
+    def test_score_acotado_a_rango_0_100(self):
+        service = self._service(avg=100.0, completeness=100.0, match=100.0, interviews=1)
+        result = service.calculate_employability_score(user_id=1)
+        assert result["score"] == 100.0
 
 
 # ── analyze_weak_areas ────────────────────────────────────────────────────────

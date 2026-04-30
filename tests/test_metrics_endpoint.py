@@ -115,6 +115,106 @@ class TestGetUserMetrics:
         assert "last_updated" in data
 
 
+class TestGetEmployabilityScore:
+    def _make_metrics(self, employability_score=72.0, last_updated="2026-05-01 10:00:00"):
+        m = MagicMock()
+        m.employability_score = employability_score
+        m.last_updated = last_updated
+        return m
+
+    def _employability_result(self, score=72.0, interviews=3, interview_score=80.0,
+                               completeness=80.0, match=65.0):
+        return {
+            "score": score,
+            "breakdown": {
+                "interview_score": interview_score,
+                "profile_completeness": completeness,
+                "avg_match_score": match,
+            },
+            "total_interviews": interviews,
+        }
+
+    def test_retorna_score_con_breakdown(self):
+        db = MagicMock()
+        from unittest.mock import patch
+        with patch("api.metrics.UserMetricsService") as MockService:
+            instance = MockService.return_value
+            instance.calculate_employability_score.return_value = self._employability_result()
+            instance.update_for_user.return_value = self._make_metrics()
+
+            client = _make_app_with_db(db)
+            response = client.get("/api/metrics/employability")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["score"] == 72.0
+        assert data["breakdown"]["interview_score"] == 80.0
+        assert data["breakdown"]["profile_completeness"] == 80.0
+        assert data["breakdown"]["avg_match_score"] == 65.0
+
+    def test_sin_entrevistas_incluye_mensaje_motivacional(self):
+        db = MagicMock()
+        from unittest.mock import patch
+        with patch("api.metrics.UserMetricsService") as MockService:
+            instance = MockService.return_value
+            instance.calculate_employability_score.return_value = self._employability_result(
+                score=34.0, interviews=0, interview_score=0.0, completeness=100.0, match=70.0
+            )
+            instance.update_for_user.return_value = self._make_metrics(employability_score=34.0)
+
+            client = _make_app_with_db(db)
+            response = client.get("/api/metrics/employability")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["score"] == 34.0
+        assert data["breakdown"]["interview_score"] == 0.0
+        assert data["motivational_message"] is not None
+        assert len(data["motivational_message"]) > 0
+
+    def test_con_entrevistas_no_incluye_mensaje_motivacional(self):
+        db = MagicMock()
+        from unittest.mock import patch
+        with patch("api.metrics.UserMetricsService") as MockService:
+            instance = MockService.return_value
+            instance.calculate_employability_score.return_value = self._employability_result(
+                interviews=3
+            )
+            instance.update_for_user.return_value = self._make_metrics()
+
+            client = _make_app_with_db(db)
+            response = client.get("/api/metrics/employability")
+
+        assert response.status_code == 200
+        assert response.json()["motivational_message"] is None
+
+    def test_respuesta_incluye_campos_requeridos(self):
+        db = MagicMock()
+        from unittest.mock import patch
+        with patch("api.metrics.UserMetricsService") as MockService:
+            instance = MockService.return_value
+            instance.calculate_employability_score.return_value = self._employability_result()
+            instance.update_for_user.return_value = self._make_metrics()
+
+            client = _make_app_with_db(db)
+            response = client.get("/api/metrics/employability")
+
+        data = response.json()
+        assert "score" in data
+        assert "breakdown" in data
+        assert "last_updated" in data
+        assert "interview_score" in data["breakdown"]
+        assert "profile_completeness" in data["breakdown"]
+        assert "avg_match_score" in data["breakdown"]
+
+    def test_requiere_autenticacion(self):
+        test_app = FastAPI()
+        test_app.include_router(metrics_module.router, prefix="/api")
+        client = TestClient(test_app, raise_server_exceptions=False)
+        response = client.get("/api/metrics/employability")
+        assert response.status_code in (401, 422, 500)
+
+
 class TestGetMetricsTimeline:
     def test_timeline_week_retorna_periodos(self):
         db = MagicMock()
