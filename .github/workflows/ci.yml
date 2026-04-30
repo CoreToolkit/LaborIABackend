@@ -92,7 +92,7 @@ jobs:
       # ── Start Sentinel gate (AI_DISABLED=true → Ollama off) ──────────────
       - name: Start Sentinel gate
         run: |
-          pip install fastapi uvicorn httpx pydantic --quiet
+          pip install fastapi "uvicorn[standard]" httpx pydantic python-dotenv "sqlalchemy[asyncio]" aiosqlite --quiet
           cd Sentinel-AI-CD/app && \
             AI_DISABLED=true uvicorn main:app --port 8000 &
           # Wait until the health endpoint responds
