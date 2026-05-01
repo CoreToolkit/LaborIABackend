@@ -142,6 +142,13 @@ def get_group_session_by_code(
         ) from exc
     
     response.status_code = status.HTTP_200_OK
+
+    user_id = current_user["id"]
+    my_session = next(
+        (s for s in (session.interview_sessions or []) if s.user_id == user_id),
+        None,
+    )
+
     detail_payload = {
         "id": session.id,
         "session_code": session.session_code,
@@ -154,6 +161,7 @@ def get_group_session_by_code(
         "created_at": session.created_at,
         "updated_at": session.updated_at,
         "participant_count": len(session.interview_sessions or []),
+        "my_interview_session_id": my_session.id if my_session else None,
     }
     return GroupInterviewSessionDetailSchema.model_validate(detail_payload).model_dump(mode="json")
 
