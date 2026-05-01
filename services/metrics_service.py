@@ -172,9 +172,94 @@ class UserMetricsService:
             if scores
         }
 
+    def _calculate_profile_completeness(self, user_id: int) -> float:
+        """
+        Calcula el porcentaje de completitud del perfil del usuario (0-100).
+        Evalúa 9 campos escalares + presencia de experiencias y skills (11 en total).
+        """
+        from models.profile import Profile
+
+        profile = self.db.query(Profile).filter(Profile.user_id == user_id).first()
+        if not profile:
+            return 0.0
+
+        scalar_fields = [
+            profile.full_name,
+            profile.career,
+            profile.university,
+            profile.graduation_date,
+            profile.description,
+            profile.english_level,
+            profile.preferred_location,
+            profile.preferred_employment_type,
+            profile.salary_expectation,
+        ]
+
+        filled = sum(1 for f in scalar_fields if f is not None)
+        filled += 1 if profile.experiences else 0
+        filled += 1 if profile.skills else 0
+
+        return round(filled / 11 * 100, 2)
+
+    def _calculate_avg_match_score(self, user_id: int) -> float:
+        """
+        Calcula el score promedio de match con roles (0-100).
+        Retorna 0.0 si el usuario no tiene matches calculados.
+        """
+        from models.match_result import MatchResult
+        from sqlalchemy import func as sqlfunc
+
+        result = (
+            self.db.query(sqlfunc.avg(MatchResult.total_score))
+            .filter(MatchResult.user_id == user_id)
+            .scalar()
+        )
+        return round(float(result), 2) if result is not None else 0.0
+
+    def calculate_employability_score(self, user_id: int) -> dict:
+        """
+        Calcula el puntaje global de empleabilidad (0-100) sin persistir.
+
+        Fórmula:
+          score = interview_score * 0.60 + profile_completeness * 0.20 + avg_match_score * 0.20
+
+        Retorna:
+          {
+            "score": float,
+            "breakdown": {
+              "interview_score": float,
+              "profile_completeness": float,
+              "avg_match_score": float,
+            },
+            "total_interviews": int,
+          }
+        """
+        interview_score = self.calculate_average_score(user_id)
+        profile_completeness = self._calculate_profile_completeness(user_id)
+        avg_match_score = self._calculate_avg_match_score(user_id)
+        total_interviews = self._count_completed_interviews(user_id)
+
+        score = round(
+            interview_score * 0.60
+            + profile_completeness * 0.20
+            + avg_match_score * 0.20,
+            2,
+        )
+
+        return {
+            "score": score,
+            "breakdown": {
+                "interview_score": interview_score,
+                "profile_completeness": profile_completeness,
+                "avg_match_score": avg_match_score,
+            },
+            "total_interviews": total_interviews,
+        }
+
     def update_for_user(self, user_id: int):
         """
-        Recalcula y persiste las métricas agregadas del usuario.
+        Recalcula y persiste las métricas agregadas del usuario, incluido
+        el puntaje de empleabilidad. Se llama automáticamente tras cada entrevista.
 
         Retorna el registro UserMetrics actualizado o creado.
         """
@@ -183,18 +268,25 @@ class UserMetricsService:
         avg_score = self.calculate_average_score(user_id)
         score_by_skill = self.score_by_skill(user_id)
         total_interviews = self._count_completed_interviews(user_id)
+        profile_completeness = self._calculate_profile_completeness(user_id)
+        avg_match_score = self._calculate_avg_match_score(user_id)
+        employability_score = round(
+            avg_score * 0.60 + profile_completeness * 0.20 + avg_match_score * 0.20, 2
+        )
 
         metrics = self.db.query(UserMetrics).filter(UserMetrics.user_id == user_id).first()
         if metrics:
             metrics.avg_score = avg_score
             metrics.score_by_skill = score_by_skill
             metrics.total_interviews = total_interviews
+            metrics.employability_score = employability_score
         else:
             metrics = UserMetrics(
                 user_id=user_id,
                 avg_score=avg_score,
                 score_by_skill=score_by_skill,
                 total_interviews=total_interviews,
+                employability_score=employability_score,
             )
             self.db.add(metrics)
 

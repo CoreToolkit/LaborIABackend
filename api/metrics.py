@@ -34,6 +34,19 @@ class TimelinePointResponse(BaseModel):
     count: int
 
 
+class EmployabilityBreakdown(BaseModel):
+    interview_score: float
+    profile_completeness: float
+    avg_match_score: float
+
+
+class EmployabilityScoreResponse(BaseModel):
+    score: float
+    breakdown: EmployabilityBreakdown
+    last_updated: str | None
+    motivational_message: str | None = None
+
+
 @router.get("/user", response_model=UserMetricsResponse)
 def get_user_metrics(
     db: Session = Depends(get_db),
@@ -54,6 +67,39 @@ def get_user_metrics(
         score_by_skill=metrics.score_by_skill or {},
         total_interviews=metrics.total_interviews,
         last_updated=str(metrics.last_updated) if metrics.last_updated else None,
+    )
+
+
+@router.get("/employability", response_model=EmployabilityScoreResponse)
+def get_employability_score(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Retorna el puntaje global de empleabilidad del usuario autenticado.
+
+    score = interview_score(60%) + profile_completeness(20%) + avg_match_score(20%)
+
+    Incluye breakdown por componente y un mensaje motivacional cuando el usuario
+    no ha completado ninguna entrevista aún.
+    """
+    user_id: int = current_user["id"]
+    service = UserMetricsService(db)
+
+    result = service.calculate_employability_score(user_id)
+    metrics = service.update_for_user(user_id)
+
+    motivational_message = None
+    if result["total_interviews"] == 0:
+        motivational_message = (
+            "¡Completa tu primera entrevista para mejorar tu puntaje de empleabilidad!"
+        )
+
+    return EmployabilityScoreResponse(
+        score=result["score"],
+        breakdown=EmployabilityBreakdown(**result["breakdown"]),
+        last_updated=str(metrics.last_updated) if metrics.last_updated else None,
+        motivational_message=motivational_message,
     )
 
 
