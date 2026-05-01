@@ -30,6 +30,30 @@ class ReportService:
             for session in sessions
         ]
 
+    def list_session_reports_summary(self, user_id: int) -> list[dict]:
+        """
+        Retorna una versión ligera de los reportes del usuario, adecuada para listados
+        y tarjetas en el frontend. No provoca side-effects.
+        """
+        full_reports = self.list_session_reports(user_id=user_id)
+        summaries = []
+        for r in full_reports:
+            summaries.append(
+                {
+                    "session_id": r["session_id"],
+                    "session_score": r["session_score"],
+                    "session_created_at": r["session_created_at"],
+                    "total_questions": r["total_questions"],
+                    "completed_questions": r["completed_questions"],
+                    "trend": r["comparison"]["trend"],
+                    "improvement": r["comparison"]["improvement"],
+                    "previous_score": r["comparison"]["previous_score"],
+                    "badges_count": len(r.get("badges_unlocked", [])),
+                }
+            )
+
+        return summaries
+
     def _build_session_report(
         self,
         session: InterviewSession,

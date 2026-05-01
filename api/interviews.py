@@ -50,6 +50,18 @@ class SessionReportResponse(BaseModel):
     session_created_at: str
 
 
+class ReportSummaryResponse(BaseModel):
+    session_id: int
+    session_score: float | None
+    session_created_at: str
+    total_questions: int
+    completed_questions: int
+    trend: str
+    improvement: float | None
+    previous_score: float | None
+    badges_count: int
+
+
 @router.get("/{session_id}/report", response_model=SessionReportResponse)
 def get_session_report(
     session_id: int,
@@ -86,3 +98,18 @@ def list_session_reports(
     reports = ReportService(db).list_session_reports(user_id=user_id)
 
     return [SessionReportResponse(**report) for report in reports]
+
+
+@router.get("/reports/summary", response_model=list[ReportSummaryResponse])
+def list_session_reports_summary(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Retorna un resumen ligero del historial de reportes para uso en dashboards/tarjetas.
+    Sin evaluaciones detalladas ni efectos secundarios.
+    """
+    user_id: int = current_user["id"]
+    summaries = ReportService(db).list_session_reports_summary(user_id=user_id)
+
+    return [ReportSummaryResponse(**s) for s in summaries]

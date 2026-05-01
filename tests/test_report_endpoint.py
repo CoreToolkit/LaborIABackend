@@ -180,3 +180,50 @@ class TestListSessionReports:
 
         assert response.status_code == 200
         assert response.json() == []
+
+
+class TestListSessionReportsSummary:
+    def test_retorna_resumen_ligero(self):
+        db = MagicMock()
+        first = {
+            "session_id": 2,
+            "session_score": 88.0,
+            "session_created_at": "2026-05-02 10:00:00+00:00",
+            "total_questions": 4,
+            "completed_questions": 4,
+            "trend": "improved",
+            "improvement": 8.0,
+            "previous_score": 80.0,
+            "badges_count": 1,
+        }
+
+        second = {
+            "session_id": 1,
+            "session_score": 80.0,
+            "session_created_at": "2026-05-01 10:00:00+00:00",
+            "total_questions": 3,
+            "completed_questions": 3,
+            "trend": "first_session",
+            "improvement": None,
+            "previous_score": None,
+            "badges_count": 0,
+        }
+
+        with patch("api.interviews.ReportService") as MockService:
+            MockService.return_value.list_session_reports_summary.return_value = [first, second]
+            response = _make_client(db).get("/api/interviews/reports/summary")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 2
+        assert data[0]["session_id"] == 2
+        assert data[0]["badges_count"] == 1
+
+    def test_resumen_vacio_retorna_lista_vacia(self):
+        db = MagicMock()
+        with patch("api.interviews.ReportService") as MockService:
+            MockService.return_value.list_session_reports_summary.return_value = []
+            response = _make_client(db).get("/api/interviews/reports/summary")
+
+        assert response.status_code == 200
+        assert response.json() == []
