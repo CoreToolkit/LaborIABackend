@@ -148,3 +148,35 @@ class TestGetSessionReport:
                       "completed_questions", "evaluations", "comparison",
                       "badges_unlocked", "session_created_at"]:
             assert field in data
+
+
+class TestListSessionReports:
+    def test_retorna_historial_de_reportes(self):
+        db = MagicMock()
+        second_report = _base_report(session_score=80.0, has_previous=False)
+        second_report["session_id"] = 2
+        second_report["session_created_at"] = "2026-05-02 10:00:00+00:00"
+
+        with patch("api.interviews.ReportService") as MockService:
+            MockService.return_value.list_session_reports.return_value = [
+                second_report,
+                _base_report(),
+            ]
+            response = _make_client(db).get("/api/interviews/reports")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 2
+        assert data[0]["session_id"] == 2
+        assert data[1]["session_id"] == 1
+        assert data[0]["session_score"] == 80.0
+        assert data[0]["completed_questions"] == 3
+
+    def test_historial_vacio_retorna_lista_vacia(self):
+        db = MagicMock()
+        with patch("api.interviews.ReportService") as MockService:
+            MockService.return_value.list_session_reports.return_value = []
+            response = _make_client(db).get("/api/interviews/reports")
+
+        assert response.status_code == 200
+        assert response.json() == []

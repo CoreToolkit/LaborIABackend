@@ -14,20 +14,44 @@ class ReportService:
         if not session:
             return None
 
-        evaluations = self._get_session_evaluations(session_id)
-        session_score = self._calculate_session_score(evaluations)
+        return self._build_session_report(session=session, user_id=user_id, unlock_badges=True)
 
-        BadgeService(self.db).check_and_unlock_badges(
-            user_id=user_id,
-            session_id=session_id,
-            session_score=session_score,
+    def list_session_reports(self, user_id: int) -> list[dict]:
+        sessions = (
+            self.db.query(InterviewSession)
+            .options(joinedload(InterviewSession.questions))
+            .filter(InterviewSession.user_id == user_id)
+            .order_by(InterviewSession.created_at.desc(), InterviewSession.id.desc())
+            .all()
         )
 
-        comparison = self._get_comparison(user_id, session_id, session_score)
+        return [
+            self._build_session_report(session=session, user_id=user_id, unlock_badges=False)
+            for session in sessions
+        ]
+
+    def _build_session_report(
+        self,
+        session: InterviewSession,
+        user_id: int,
+        unlock_badges: bool,
+    ) -> dict:
+
+        evaluations = self._get_session_evaluations(session.id)
+        session_score = self._calculate_session_score(evaluations)
+
+        if unlock_badges:
+            BadgeService(self.db).check_and_unlock_badges(
+                user_id=user_id,
+                session_id=session.id,
+                session_score=session_score,
+            )
+
+        comparison = self._get_comparison(user_id, session.id, session_score)
         badges = self._get_session_badges(user_id, session.created_at)
 
         return {
-            "session_id": session_id,
+            "session_id": session.id,
             "session_score": session_score,
             "total_questions": len(session.questions),
             "completed_questions": len(evaluations),

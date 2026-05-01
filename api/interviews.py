@@ -71,3 +71,18 @@ def get_session_report(
         raise HTTPException(status_code=404, detail="Session not found or does not belong to you.")
 
     return SessionReportResponse(**report)
+
+
+@router.get("/reports", response_model=list[SessionReportResponse])
+def list_session_reports(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Retorna el historial de reportes de entrevistas del usuario autenticado.
+    Devuelve una lista ordenada del reporte más reciente al más antiguo.
+    """
+    user_id: int = current_user["id"]
+    reports = ReportService(db).list_session_reports(user_id=user_id)
+
+    return [SessionReportResponse(**report) for report in reports]
