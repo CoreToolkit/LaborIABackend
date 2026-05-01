@@ -55,14 +55,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ── Checkout Sentinel desde la misma ref que disparó el workflow ─────
-      # IMPORTANT: must use the triggering SHA (not a fixed branch) so that
-      # changes pushed to develop are actually tested.
+      # ── Checkout Sentinel desde su rama principal ───────────────────────
       - name: Checkout Sentinel
         uses: actions/checkout@v4
         with:
           repository: DannielEU/Sentinel-AI-CD
-          ref: ${{ github.sha }}
+          ref: develop
           path: Sentinel-AI-CD
 
       - name: Set lowercase image name
