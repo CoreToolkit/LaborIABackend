@@ -15,6 +15,121 @@ class BadgeService:
         self.db = db
         self.repo = BadgeRepository(db)
 
+    def get_user_badges_with_progress(self, user_id: int) -> list[dict]:
+        """
+        Returns all badges with unlock status and progress (0.0–1.0) toward each condition.
+        Used by GET /api/badges/me.
+        """
+        total_interviews = self._count_completed_sessions(user_id)
+        avg_score = UserMetricsService(self.db).calculate_average_score(user_id)
+        best_session_score = self._get_best_session_score(user_id)
+        best_improvement = self._get_best_score_improvement(user_id)
+
+        unlocked_ids = {ub.badge_id for ub in self.repo.list_by_user(user_id)}
+
+        result = []
+        for badge in self.repo.list_all():
+            is_unlocked = badge.id in unlocked_ids
+            progress = self._calculate_progress(badge, {
+                "total_interviews": total_interviews,
+                "avg_score": avg_score,
+                "best_session_score": best_session_score,
+                "best_improvement": best_improvement,
+            })
+            result.append({
+                "id": badge.id,
+                "name": badge.name,
+                "description": badge.description,
+                "icon": badge.icon,
+                "condition_type": badge.condition_type,
+                "condition_value": badge.condition_value,
+                "is_unlocked": is_unlocked,
+                "progress": progress,
+            })
+
+        return result
+
+    def _calculate_progress(self, badge: Badge, context: dict) -> float:
+        t = badge.condition_type
+        v = badge.condition_value
+        if not t or not v:
+            return 0.0
+        try:
+            if t == "total_interviews":
+                return min(context["total_interviews"] / int(v), 1.0)
+            if t == "session_score_gte":
+                score = context["best_session_score"]
+                return min(score / float(v), 1.0) if score is not None else 0.0
+            if t == "score_improvement_gte":
+                improvement = context["best_improvement"]
+                return min(improvement / float(v), 1.0) if improvement is not None else 0.0
+            if t == "avg_score_gte":
+                return min(context["avg_score"] / float(v), 1.0)
+        except (ValueError, TypeError, ZeroDivisionError):
+            pass
+        return 0.0
+
+    def _get_best_session_score(self, user_id: int) -> float | None:
+        from models.evaluation import Evaluation, EvaluationStatus
+        from models.interview_session import InterviewSession
+
+        sessions = (
+            self.db.query(InterviewSession)
+            .filter(InterviewSession.user_id == user_id)
+            .all()
+        )
+        best: float | None = None
+        for session in sessions:
+            evals = (
+                self.db.query(Evaluation)
+                .filter(
+                    Evaluation.interview_session_id == session.id,
+                    Evaluation.status == EvaluationStatus.COMPLETED,
+                    Evaluation.score >= 0,
+                )
+                .all()
+            )
+            valid = [e.score for e in evals if e.score is not None]
+            if valid:
+                avg = sum(valid) / len(valid)
+                if best is None or avg > best:
+                    best = avg
+        return best
+
+    def _get_best_score_improvement(self, user_id: int) -> float | None:
+        from models.evaluation import Evaluation, EvaluationStatus
+        from models.interview_session import InterviewSession
+
+        sessions = (
+            self.db.query(InterviewSession)
+            .filter(InterviewSession.user_id == user_id)
+            .order_by(InterviewSession.created_at.asc())
+            .all()
+        )
+        scores: list[float] = []
+        for session in sessions:
+            evals = (
+                self.db.query(Evaluation)
+                .filter(
+                    Evaluation.interview_session_id == session.id,
+                    Evaluation.status == EvaluationStatus.COMPLETED,
+                    Evaluation.score >= 0,
+                )
+                .all()
+            )
+            valid = [e.score for e in evals if e.score is not None]
+            if valid:
+                scores.append(sum(valid) / len(valid))
+
+        if len(scores) < 2:
+            return None
+        best_improvement: float | None = None
+        for i in range(1, len(scores)):
+            diff = scores[i] - scores[i - 1]
+            if best_improvement is None or diff > best_improvement:
+                best_improvement = diff
+        return best_improvement
+
     def check_and_unlock_badges(
         self,
         user_id: int,
