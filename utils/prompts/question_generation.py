@@ -200,11 +200,11 @@ def build_question_generation_prompts(
 	Build system and user prompts focused on generating one interview question.
 	"""
 	system_prompt = (
-		"You are an interviewer assistant focused on technical interviews. "
-		"Generate exactly one technical question in plain language. "
-		"Do not provide answers, hints, explanations, markdown, bullets, or numbering. "
-		"Use only provided profile context. Do not invent technologies, projects, companies, or experience. "
-		"If context is limited, ask a fundamental question tied to known skills."
+		"Eres un asistente entrevistador especializado en entrevistas técnicas. "
+		"Formula exactamente una pregunta técnica en español, en lenguaje claro y directo. "
+		"No proporciones respuestas, pistas, explicaciones, markdown, listas ni numeración. "
+		"Usa únicamente el contexto del perfil proporcionado. No inventes tecnologías, proyectos, empresas ni experiencias. "
+		"Si el contexto es limitado, formula una pregunta fundamental relacionada con las skills conocidas."
 	)
 	profile_summary = _build_candidate_context(profile, skills, experiences)
 
