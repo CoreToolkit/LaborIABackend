@@ -7,6 +7,7 @@ pytest.importorskip("sqlalchemy")
 from fastapi.testclient import TestClient
 from dotenv import load_dotenv
 
+from models.refresh_token import RefreshToken, hash_token
 from models.user import User
 from core.database import Base, engine, SessionLocal
 from services import refresh_tokens as refresh_tokens_service
@@ -52,6 +53,7 @@ def test_refresh_valid_token(monkeypatch):
     assert resp.status_code == 200
     body = resp.json()
     assert "access_token" in body and "refresh_token" in body
+    assert body["refresh_token"] != token
 
 
 def test_refresh_invalid_token(monkeypatch):
@@ -86,3 +88,47 @@ def test_store_and_revoke_refresh_token(monkeypatch):
     refresh_tokens_service.revoke_refresh_token(db, token)
     assert not refresh_tokens_service.is_refresh_token_valid(db, token)
     db.close()
+
+
+def test_refresh_token_replay_attack_returns_revoked(monkeypatch):
+    load_dotenv()
+    db = SessionLocal()
+    user = _seed_user(db)
+    old_token = refresh_tokens_service.create_refresh_token(db, user_id=user.email)
+    db.close()
+
+    first_resp = client.post("/auth/refresh", json={"refresh_token": old_token})
+    assert first_resp.status_code == 200
+    new_token = first_resp.json()["refresh_token"]
+    assert new_token != old_token
+
+    replay_resp = client.post("/auth/refresh", json={"refresh_token": old_token})
+    assert replay_resp.status_code == 401
+    assert replay_resp.json()["detail"] == "Token has been revoked"
+
+
+def test_refresh_cleans_expired_tokens_on_each_call(monkeypatch):
+    load_dotenv()
+    db = SessionLocal()
+    user = _seed_user(db)
+    expired_token = "expired-refresh-token"
+    refresh_tokens_service.store_refresh_token(
+        db,
+        user_id=user.email,
+        token=expired_token,
+        expires_at=dt.datetime.utcnow() - dt.timedelta(minutes=1),
+    )
+    valid_token = refresh_tokens_service.create_refresh_token(db, user_id=user.email)
+    db.close()
+
+    resp = client.post("/auth/refresh", json={"refresh_token": valid_token})
+    assert resp.status_code == 200
+
+    db = SessionLocal()
+    expired_record = (
+        db.query(RefreshToken)
+        .filter(RefreshToken.token_hash == hash_token(expired_token))
+        .first()
+    )
+    db.close()
+    assert expired_record is None

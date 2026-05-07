@@ -50,6 +50,21 @@ class AzureSpeechService:
         if language:
             speech_config.speech_recognition_language = language
 
+        # Silencio inicial: dar hasta 15s antes de rendirse si el usuario
+        # tarda en empezar a hablar (por defecto son 5s → causa 422).
+        speech_config.set_property(
+            speechsdk.PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs,
+            "15000",
+        )
+
+        # Silencio al final del habla: cuánto esperar tras la última palabra
+        # antes de cerrar el segmento. 2000ms da margen para pausas naturales
+        # entre frases sin cortar la respuesta prematuramente.
+        speech_config.set_property(
+            speechsdk.PropertyId.Speech_SegmentationSilenceTimeoutMs,
+            "2000",
+        )
+
         return speech_config
 
     def create_speech_recognizer(self, audio_config, language: str = None):
@@ -141,25 +156,37 @@ class AzureSpeechService:
             gc.collect()
             self._cleanup_temp_file(temp_path)
 
-    def transcribe_audio(
-        self,
-        audio_bytes: bytes,
-        filename: str = None,
-        language: str = None,
-    ) -> str:
-        temp_path = None
-        suffix = Path(filename or "").suffix
-        audio_config = None
+    def transcribe_compressed_audio(self, audio_bytes: bytes, language: str = None) -> str:
+        """
+        Transcribe audio comprimido (webm/opus del navegador) usando PushAudioInputStream.
+        El método estándar transcribe_audio falla con webm porque espera cabecera WAV.
+        """
+        push_stream = None
         recognizer = None
-        result = None
 
         try:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
-                temp_file.write(audio_bytes)
-                temp_path = temp_file.name
+            container_formats = [
+                getattr(speechsdk.AudioStreamContainerFormat, "WEBM_OPUS", None),
+                getattr(speechsdk.AudioStreamContainerFormat, "ANY", None),
+                getattr(speechsdk.AudioStreamContainerFormat, "OGG_OPUS", None),
+            ]
+            container_format = next((f for f in container_formats if f is not None), None)
 
-            audio_config = speechsdk.audio.AudioConfig(filename=temp_path)
-            recognizer = self.create_speech_recognizer(audio_config, language=language)
+            if container_format is None:
+                raise Exception("El SDK de Azure Speech no soporta formatos de audio comprimido en este entorno.")
+
+            stream_format = speechsdk.audio.AudioStreamFormat.get_compressed_format_for_pull_stream(container_format)
+            push_stream = speechsdk.audio.PushAudioInputStream(stream_format=stream_format)
+            audio_config = speechsdk.audio.AudioConfig(stream=push_stream)
+            recognizer = speechsdk.SpeechRecognizer(
+                speech_config=self.create_speech_config(language=language),
+                audio_config=audio_config,
+            )
+
+            push_stream.write(audio_bytes)
+            push_stream.close()
+            push_stream = None
+
             result = recognizer.recognize_once_async().get()
 
             if result.reason == speechsdk.ResultReason.RecognizedSpeech:
@@ -169,20 +196,98 @@ class AzureSpeechService:
                 return ""
 
             if result.reason == speechsdk.ResultReason.Canceled:
-                cancellation_details = result.cancellation_details
-                detail = f"Azure Speech canceló la transcripcion: {cancellation_details.reason}"
-
-                if cancellation_details.reason == speechsdk.CancellationReason.Error:
-                    error_details = cancellation_details.error_details or "Sin detalles adicionales"
-                    detail = f"{detail}. {error_details}"
-
+                cancellation = result.cancellation_details
+                detail = f"Azure Speech canceló: {cancellation.reason}"
+                if cancellation.reason == speechsdk.CancellationReason.Error:
+                    detail += f". {cancellation.error_details or ''}"
                 raise Exception(detail)
 
             return ""
         except Exception as e:
+            raise Exception(f"Error en Azure Speech (compressed): {str(e)}")
+        finally:
+            recognizer = None
+            if push_stream:
+                try:
+                    push_stream.close()
+                except Exception:
+                    pass
+            gc.collect()
+
+    def transcribe_audio(
+        self,
+        audio_bytes: bytes,
+        filename: str = None,
+        language: str = None,
+    ) -> str:
+        """
+        Transcribe el audio completo usando reconocimiento continuo.
+        """
+        temp_path = None
+        suffix = Path(filename or "").suffix or ".wav"
+        audio_config = None
+        recognizer = None
+
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+                temp_file.write(audio_bytes)
+                temp_path = temp_file.name
+
+            audio_config = speechsdk.audio.AudioConfig(filename=temp_path)
+            recognizer = self.create_speech_recognizer(audio_config, language=language)
+
+            all_text_parts: list[str] = []
+            done_event = False
+            recognition_error: Exception | None = None
+
+            def on_recognized(evt):
+                result = getattr(evt, "result", None)
+                if result is None:
+                    return
+                if result.reason == speechsdk.ResultReason.RecognizedSpeech:
+                    text = (result.text or "").strip()
+                    if text:
+                        all_text_parts.append(text)
+
+            def on_session_stopped(_):
+                nonlocal done_event
+                done_event = True
+
+            def on_canceled(evt):
+                nonlocal done_event, recognition_error
+                done_event = True
+                result = getattr(evt, "result", None)
+                if result is None:
+                    return
+                if result.reason == speechsdk.ResultReason.Canceled:
+                    cancellation = result.cancellation_details
+                    if cancellation.reason == speechsdk.CancellationReason.Error:
+                        detail = f"Azure Speech canceló la transcripcion: {cancellation.reason}. {cancellation.error_details or ''}"
+                        recognition_error = Exception(detail)
+
+            recognizer.recognized.connect(on_recognized)
+            recognizer.session_stopped.connect(on_session_stopped)
+            recognizer.canceled.connect(on_canceled)
+
+            recognizer.start_continuous_recognition_async().get()
+
+            # Esperar a que el SDK termine de procesar todo el archivo
+            timeout_s = 120
+            elapsed = 0.0
+            while not done_event and elapsed < timeout_s:
+                time.sleep(0.1)
+                elapsed += 0.1
+
+            recognizer.stop_continuous_recognition_async().get()
+
+            if recognition_error:
+                raise recognition_error
+
+            return " ".join(all_text_parts).strip()
+
+        except Exception as e:
             raise Exception(f"Error en Azure Speech: {str(e)}")
         finally:
-            result = None
             recognizer = None
             audio_config = None
             gc.collect()

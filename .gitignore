@@ -1,11 +1,12 @@
 .env
 venv/
+.venv/
 __pycache__/
 .vscode/
 .idea/
 .coverage
 htmlcov/
 .pytest_cache/
-test.db
+.*.db
+*.db
 reports/
-

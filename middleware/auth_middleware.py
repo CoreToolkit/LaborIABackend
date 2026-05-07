@@ -11,6 +11,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
         self.excluded_paths = excluded_paths or []
 
     async def dispatch(self, request: Request, call_next):
+        # BaseHTTPMiddleware recibe también conexiones WebSocket como scope type "websocket".
+        # Intentar procesarlas como HTTP rompe el handshake WS.
+        # Las dejamos pasar directamente — la autenticación WS se maneja en el endpoint.
+        if request.scope.get("type") == "websocket":
+            return await call_next(request)
+
         path = request.url.path
 
         # Permitir preflight CORS sin exigir token

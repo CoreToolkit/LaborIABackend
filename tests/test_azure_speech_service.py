@@ -81,14 +81,38 @@ def test_azure_speech_client_delegates_diarization_to_service():
 def test_azure_speech_service_returns_text_when_transcription_succeeds(monkeypatch):
     captured = {}
 
+    class Signal:
+        def __init__(self):
+            self.handlers = []
+
+        def connect(self, handler):
+            self.handlers.append(handler)
+
     class DummyRecognizer:
-        def recognize_once_async(self):
-            return SimpleNamespace(
-                get=lambda: SimpleNamespace(
-                    reason=azure_speech_service_module.speechsdk.ResultReason.RecognizedSpeech,
-                    text="Texto transcrito",
-                )
-            )
+        def __init__(self):
+            self.recognized = Signal()
+            self.session_stopped = Signal()
+            self.canceled = Signal()
+
+        def start_continuous_recognition_async(self):
+            def _run():
+                # Simula un evento de reconocimiento exitoso
+                for handler in self.recognized.handlers:
+                    handler(SimpleNamespace(
+                        result=SimpleNamespace(
+                            reason=azure_speech_service_module.speechsdk.ResultReason.RecognizedSpeech,
+                            text="Texto transcrito",
+                        )
+                    ))
+                # Simula fin de sesión
+                for handler in self.session_stopped.handlers:
+                    handler(SimpleNamespace())
+                return None
+
+            return SimpleNamespace(get=_run)
+
+        def stop_continuous_recognition_async(self):
+            return SimpleNamespace(get=lambda: None)
 
     def fake_create_speech_recognizer(self, audio_config, language=None):
         captured["filename"] = audio_config.filename
@@ -113,9 +137,27 @@ def test_azure_speech_service_returns_text_when_transcription_succeeds(monkeypat
 
 
 def test_azure_speech_service_wraps_provider_errors(monkeypatch):
+    class Signal:
+        def __init__(self):
+            self.handlers = []
+
+        def connect(self, handler):
+            self.handlers.append(handler)
+
     class DummyRecognizer:
-        def recognize_once_async(self):
-            return SimpleNamespace(get=lambda: (_ for _ in ()).throw(Exception("provider failed")))
+        def __init__(self):
+            self.recognized = Signal()
+            self.session_stopped = Signal()
+            self.canceled = Signal()
+
+        def start_continuous_recognition_async(self):
+            def _run():
+                raise Exception("provider failed")
+
+            return SimpleNamespace(get=_run)
+
+        def stop_continuous_recognition_async(self):
+            return SimpleNamespace(get=lambda: None)
 
     def fake_create_speech_recognizer(self, audio_config, language=None):
         return DummyRecognizer()

@@ -76,7 +76,7 @@ def test_join_group_session_creates_interview_session_once():
             difficulty="intermediate",
         )
 
-        returned_group_session, interview_session = service.join_group_session(
+        returned_group_session, interview_session, _ = service.join_group_session(
             session_code=group_session.session_code,
             user_id=user.id,
         )
@@ -85,7 +85,7 @@ def test_join_group_session_creates_interview_session_once():
         assert interview_session.user_id == user.id
         assert interview_session.group_interview_session_id == group_session.id
 
-        _, interview_session_again = service.join_group_session(
+        _, interview_session_again, _ = service.join_group_session(
             session_code=group_session.session_code,
             user_id=user.id,
         )
@@ -103,5 +103,144 @@ def test_join_group_session_invalid_code_raises_not_found():
 
         with pytest.raises(InterviewSessionNotFoundError):
             service.join_group_session(session_code="ZZZZ0000", user_id=user.id)
+    finally:
+        db.close()
+
+
+def test_create_group_session_defaults_to_waiting_status():
+    db = TestSessionLocal()
+    try:
+        user = _create_user(db)
+        role = _create_role(db)
+        service = GroupInterviewSessionService(db)
+
+        group_session = service.create_group_session(
+            host_id=user.id,
+            role_id=str(role.id),
+            difficulty="beginner",
+        )
+
+        assert group_session.status == "waiting"
+    finally:
+        db.close()
+
+
+def test_start_group_session_as_host_changes_status_to_in_progress():
+    db = TestSessionLocal()
+    try:
+        host = _create_user(db)
+        role = _create_role(db)
+        service = GroupInterviewSessionService(db)
+
+        group_session = service.create_group_session(
+            host_id=host.id,
+            role_id=str(role.id),
+            difficulty="intermediate",
+        )
+
+        started = service.start_group_session(group_session.session_code, host.id)
+        assert started.status == "in_progress"
+    finally:
+        db.close()
+
+
+def test_start_group_session_not_host_raises_permission_error():
+    db = TestSessionLocal()
+    try:
+        host = _create_user(db, email=f"host-{uuid.uuid4().hex}@example.com")
+        other_user = _create_user(db, email=f"other-{uuid.uuid4().hex}@example.com")
+        role = _create_role(db)
+        service = GroupInterviewSessionService(db)
+
+        group_session = service.create_group_session(
+            host_id=host.id,
+            role_id=str(role.id),
+            difficulty="intermediate",
+        )
+
+        with pytest.raises(PermissionError):
+            service.start_group_session(group_session.session_code, other_user.id)
+    finally:
+        db.close()
+
+
+def test_start_group_session_when_already_started_raises_value_error():
+    db = TestSessionLocal()
+    try:
+        host = _create_user(db)
+        role = _create_role(db)
+        service = GroupInterviewSessionService(db)
+
+        group_session = service.create_group_session(
+            host_id=host.id,
+            role_id=str(role.id),
+            difficulty="intermediate",
+        )
+
+        service.start_group_session(group_session.session_code, host.id)
+
+        with pytest.raises(ValueError):
+            service.start_group_session(group_session.session_code, host.id)
+    finally:
+        db.close()
+
+
+def test_close_group_session_as_host_changes_status_to_closed():
+    db = TestSessionLocal()
+    try:
+        host = _create_user(db)
+        role = _create_role(db)
+        service = GroupInterviewSessionService(db)
+
+        group_session = service.create_group_session(
+            host_id=host.id,
+            role_id=str(role.id),
+            difficulty="intermediate",
+        )
+
+        service.start_group_session(group_session.session_code, host.id)
+        closed = service.close_group_session(group_session.session_code, host.id)
+        assert closed.status == "closed"
+    finally:
+        db.close()
+
+
+def test_close_group_session_not_host_raises_permission_error():
+    db = TestSessionLocal()
+    try:
+        host = _create_user(db, email=f"host-{uuid.uuid4().hex}@example.com")
+        other_user = _create_user(db, email=f"other-{uuid.uuid4().hex}@example.com")
+        role = _create_role(db)
+        service = GroupInterviewSessionService(db)
+
+        group_session = service.create_group_session(
+            host_id=host.id,
+            role_id=str(role.id),
+            difficulty="intermediate",
+        )
+
+        service.start_group_session(group_session.session_code, host.id)
+
+        with pytest.raises(PermissionError):
+            service.close_group_session(group_session.session_code, other_user.id)
+    finally:
+        db.close()
+
+
+def test_close_group_session_when_waiting_raises_value_error():
+    db = TestSessionLocal()
+    try:
+        host = _create_user(db)
+        role = _create_role(db)
+        service = GroupInterviewSessionService(db)
+
+        group_session = service.create_group_session(
+            host_id=host.id,
+            role_id=str(role.id),
+            difficulty="intermediate",
+        )
+
+        with pytest.raises(ValueError):
+            service.close_group_session(group_session.session_code, host.id)
     finally:
         db.close()

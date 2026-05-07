@@ -18,7 +18,7 @@ def run_command(command, step_name):
 
 def install():
     run_command(
-        "pip install -r requirements.txt",
+        f"{sys.executable} -m pip install -r requirements.txt",
         "Instalando dependencias"
     )
 

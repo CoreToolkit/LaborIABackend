@@ -30,8 +30,12 @@ from api import azure_speech
 from api import elevenlabs
 from api import matching
 from api.evaluations import router as evaluations_router
+from api.metrics import router as metrics_router
+from api.recommendations import router as recommendations_router
+from api.interviews import router as interviews_router
 from middleware.auth_middleware import AuthMiddleware
-# Carga variables desde .env
+from core.limiter import auth_rate_limiter, rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 try:
     Base.metadata.create_all(bind=engine)
@@ -40,6 +44,8 @@ except Exception as e:
 
 
 app = FastAPI()
+app.state.limiter = auth_rate_limiter
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 local_host_front = os.getenv("LOCAL_HOST_FRONT")
 local_ip = os.getenv("LOCAL_IP")
@@ -74,6 +80,7 @@ app.add_middleware(
         "/api/ai/ollama/ask",
         "/api/ai/azure-openai/health",
         "/api/ai/azure-openai/ask",
+        "/api/ws",
     ],
 )
 
@@ -89,6 +96,9 @@ app.include_router(matching.router, prefix="/api")
 app.include_router(ollama.router, prefix="/api")
 app.include_router(azure_openai.router, prefix="/api")
 app.include_router(evaluations_router)
+app.include_router(metrics_router, prefix="/api")
+app.include_router(recommendations_router, prefix="/api")
+app.include_router(interviews_router, prefix="/api")
 app.include_router(azure_speech.router, prefix="/api")
 app.include_router(elevenlabs.router, prefix="/api")
 app.include_router(websockets.router, prefix="/api")

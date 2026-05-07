@@ -21,6 +21,7 @@ class GroupInterviewSessionResponseSchema(BaseModel):
     host_id: int
     role_id: UUID
     difficulty: str | None
+    status: str
     created_at: datetime | None
     updated_at: datetime | None
 
@@ -52,9 +53,14 @@ class GroupInterviewSessionDetailSchema(BaseModel):
     role_id: UUID
     role: GroupSessionRoleResponse | None
     difficulty: str | None
+    status: str
     created_at: datetime | None
     updated_at: datetime | None
     participant_count: int = Field(
         default=0,
         description="Número de sesiones de entrevista vinculadas a la sesión grupal"
+    )
+    my_interview_session_id: int | None = Field(
+        default=None,
+        description="ID de la sesión individual del usuario autenticado en esta sala"
     )

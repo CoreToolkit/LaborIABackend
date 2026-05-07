@@ -12,4 +12,8 @@ from models.question import Question
 from models.evaluation import Evaluation, EvaluationStatus
 from models.interview_session import InterviewSession
 from models.group_interview_session import GroupInterviewSession
+from models.group_interview_round import GroupInterviewRound, GroupInterviewRoundStatus
+from models.user_metrics import UserMetrics
+from models.recommendation import Recommendation
+from models.badge import Badge, UserBadge
 

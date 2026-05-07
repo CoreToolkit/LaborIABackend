@@ -16,6 +16,7 @@ from core.jwt import (
     security,
 )
 from core.database import get_db
+from core.limiter import AUTH_RATE_LIMIT, auth_rate_limiter
 from repositories.user_repository import UserRepository
 from services.user_service import UserService
 from services import token_blacklist_service
@@ -104,6 +105,7 @@ async def login_google(request: Request):
 
 
 @router.post("/google/exchange")
+@auth_rate_limiter.limit(AUTH_RATE_LIMIT)
 async def google_exchange(request: Request, db: Session = Depends(get_db)):
     try:
         data = await request.json()
@@ -222,21 +224,30 @@ async def get_me(user: dict = Depends(get_current_user)):
 
 
 @router.post("/refresh")
+@auth_rate_limiter.limit(AUTH_RATE_LIMIT)
 async def refresh_token(
+    request: Request,
     refresh_token: str = Body(None, embed=True, description="Application refresh token"),
     db: Session = Depends(get_db),
 ):
+    refresh_tokens_service.cleanup_expired_refresh_tokens(db)
+
     if not refresh_token:
         raise HTTPException(status_code=400, detail="Missing refresh token")
 
-    record = refresh_tokens_service.get_valid_refresh_token(db, refresh_token)
+    record = refresh_tokens_service.get_refresh_token(db, refresh_token)
     if not record:
+        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+    if record.revoked_at is not None:
+        raise HTTPException(status_code=401, detail="Token has been revoked")
+    if record.expires_at < dt.datetime.utcnow():
         raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
 
     user = UserRepository(db).get_by_email(record.user_id)
     if not user:
         raise HTTPException(status_code=401, detail="User not found for refresh token")
 
+    new_refresh = refresh_tokens_service.rotate_refresh_token(db, record)
     new_access = create_token(
         {
             "id": user.id,
@@ -248,7 +259,7 @@ async def refresh_token(
 
     return {
         "access_token": new_access,
-        "refresh_token": refresh_token,
+        "refresh_token": new_refresh,
         "token_type": "bearer",
     }
 
@@ -286,6 +297,7 @@ def microsoft_login():
 
 
 @router.post("/microsoft/exchange")
+@auth_rate_limiter.limit(AUTH_RATE_LIMIT)
 async def microsoft_exchange(request: Request, db: Session = Depends(get_db)):
     data = await request.json()
     code = data.get("code")

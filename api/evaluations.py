@@ -16,13 +16,14 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from core.database import get_db
 from core.jwt import get_current_user
 from models.evaluation import Evaluation, EvaluationStatus
+from models.interview_session import InterviewSession
 from models.question import Question
 from services.answer_evaluator import run_evaluation_background
 from services.interview_flow import (
@@ -65,6 +66,22 @@ class EvaluationResponse(BaseModel):
     duration_ms: float | None
     evaluated_at: str | None
     completed_at: str | None
+
+
+class EvaluationHistoryItem(BaseModel):
+    evaluation_id: str
+    question_text: str | None
+    score: float | None
+    feedback: str | None
+    score_breakdown: dict | None
+    completed_at: str | None
+
+
+class EvaluationHistoryResponse(BaseModel):
+    items: list[EvaluationHistoryItem]
+    total: int
+    limit: int
+    offset: int
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -193,4 +210,52 @@ def get_evaluation(
         duration_ms=evaluation.duration_ms,
         evaluated_at=str(evaluation.evaluated_at) if evaluation.evaluated_at else None,
         completed_at=str(evaluation.completed_at) if evaluation.completed_at else None,
+    )
+
+
+@router.get("/history/user", response_model=EvaluationHistoryResponse)
+def get_evaluation_history(
+    limit: int = Query(default=10, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Retorna historial paginado de evaluaciones completadas del usuario autenticado.
+    Ordenado por completed_at descendente.
+    Solo retorna evaluaciones del usuario autenticado.
+    """
+    user_id: int = current_user["id"]
+
+    base_query = (
+        db.query(Evaluation)
+        .join(InterviewSession, Evaluation.interview_session_id == InterviewSession.id)
+        .options(joinedload(Evaluation.question))
+        .filter(
+            InterviewSession.user_id == user_id,
+            Evaluation.status == EvaluationStatus.COMPLETED,
+        )
+        .order_by(Evaluation.completed_at.desc())
+    )
+
+    total = base_query.count()
+    evaluations = base_query.offset(offset).limit(limit).all()
+
+    items = [
+        EvaluationHistoryItem(
+            evaluation_id=str(e.id),
+            question_text=e.question.question_text if e.question else None,
+            score=e.score if (e.score is not None and e.score >= 0) else None,
+            feedback=e.feedback,
+            score_breakdown=e.score_breakdown,
+            completed_at=str(e.completed_at) if e.completed_at else None,
+        )
+        for e in evaluations
+    ]
+
+    return EvaluationHistoryResponse(
+        items=items,
+        total=total,
+        limit=limit,
+        offset=offset,
     )
