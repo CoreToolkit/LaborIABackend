@@ -24,6 +24,7 @@ router = APIRouter(
 class UserMetricsResponse(BaseModel):
     avg_score: float
     score_by_skill: dict
+    score_by_category: dict
     total_interviews: int
     last_updated: str | None
 
@@ -65,6 +66,7 @@ def get_user_metrics(
     return UserMetricsResponse(
         avg_score=float(metrics.avg_score) if metrics.avg_score is not None else 0.0,
         score_by_skill=metrics.score_by_skill or {},
+        score_by_category=metrics.score_by_category or {},
         total_interviews=metrics.total_interviews,
         last_updated=str(metrics.last_updated) if metrics.last_updated else None,
     )

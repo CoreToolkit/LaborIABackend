@@ -267,6 +267,7 @@ class UserMetricsService:
 
         avg_score = self.calculate_average_score(user_id)
         score_by_skill = self.score_by_skill(user_id)
+        score_by_category = self.score_by_category(user_id)
         total_interviews = self._count_completed_interviews(user_id)
         profile_completeness = self._calculate_profile_completeness(user_id)
         avg_match_score = self._calculate_avg_match_score(user_id)
@@ -278,6 +279,7 @@ class UserMetricsService:
         if metrics:
             metrics.avg_score = avg_score
             metrics.score_by_skill = score_by_skill
+            metrics.score_by_category = score_by_category
             metrics.total_interviews = total_interviews
             metrics.employability_score = employability_score
         else:
@@ -285,6 +287,7 @@ class UserMetricsService:
                 user_id=user_id,
                 avg_score=avg_score,
                 score_by_skill=score_by_skill,
+                score_by_category=score_by_category,
                 total_interviews=total_interviews,
                 employability_score=employability_score,
             )

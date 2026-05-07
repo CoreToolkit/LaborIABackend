@@ -15,6 +15,7 @@ class RefreshToken(Base):
     token_hash = Column(String, nullable=False)
     expires_at = Column(DateTime, nullable=False)
     created_at = Column(DateTime, default=dt.datetime.utcnow, nullable=False)
+    revoked_at = Column(DateTime, nullable=True)
 
 
 def hash_token(token: str) -> str:

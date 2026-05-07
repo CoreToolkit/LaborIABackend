@@ -54,6 +54,7 @@ class TestGetUserMetrics:
             created_metrics = MagicMock()
             created_metrics.avg_score = 0.0
             created_metrics.score_by_skill = {}
+            created_metrics.score_by_category = {}
             created_metrics.total_interviews = 0
             created_metrics.last_updated = None
             instance.update_for_user.return_value = created_metrics
@@ -65,12 +66,14 @@ class TestGetUserMetrics:
         data = response.json()
         assert data["avg_score"] == 0.0
         assert data["score_by_skill"] == {}
+        assert data["score_by_category"] == {}
         assert data["total_interviews"] == 0
 
     def test_usuario_con_metricas_existentes_las_actualiza(self):
         existing = MagicMock()
         existing.avg_score = 78.5
         existing.score_by_skill = {"correctness": 80.0}
+        existing.score_by_category = {"correctness": 80.0, "completeness": 75.0}
         existing.total_interviews = 3
         existing.last_updated = "2026-05-01 10:00:00"
 
@@ -94,6 +97,7 @@ class TestGetUserMetrics:
         existing = MagicMock()
         existing.avg_score = 50.0
         existing.score_by_skill = {}
+        existing.score_by_category = {}
         existing.total_interviews = 1
         existing.last_updated = "2026-05-01"
 
@@ -111,6 +115,7 @@ class TestGetUserMetrics:
         data = response.json()
         assert "avg_score" in data
         assert "score_by_skill" in data
+        assert "score_by_category" in data
         assert "total_interviews" in data
         assert "last_updated" in data
 

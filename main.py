@@ -34,7 +34,8 @@ from api.metrics import router as metrics_router
 from api.recommendations import router as recommendations_router
 from api.interviews import router as interviews_router
 from middleware.auth_middleware import AuthMiddleware
-# Carga variables desde .env
+from core.limiter import auth_rate_limiter, rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 try:
     Base.metadata.create_all(bind=engine)
@@ -43,6 +44,8 @@ except Exception as e:
 
 
 app = FastAPI()
+app.state.limiter = auth_rate_limiter
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 local_host_front = os.getenv("LOCAL_HOST_FRONT")
 local_ip = os.getenv("LOCAL_IP")

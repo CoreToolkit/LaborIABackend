@@ -239,6 +239,58 @@ def test_token_with_disallowed_algorithm_rejected(monkeypatch):
     assert exc_info.value.status_code == 401
 
 
+# ── TASK-031-01: mensaje "Invalid token claims" para iss/aud inválidos ────────
+
+def test_wrong_iss_returns_invalid_token_claims(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET", "secret-key")
+    monkeypatch.setenv("JWT_ISSUER", "laboria-backend")
+    monkeypatch.delenv("JWT_AUDIENCE", raising=False)
+    now = datetime.now(timezone.utc)
+    token = _encode_raw(
+        {"sub": "user@example.com", "iss": "attacker",
+         "exp": now + timedelta(hours=1), "iat": now},
+        secret="secret-key",
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        core_jwt.decode_token(token)
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail == "Invalid token claims"
+
+
+def test_wrong_aud_returns_invalid_token_claims(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET", "secret-key")
+    monkeypatch.delenv("JWT_ISSUER", raising=False)
+    monkeypatch.setenv("JWT_AUDIENCE", "laboria-frontend")
+    now = datetime.now(timezone.utc)
+    token = _encode_raw(
+        {"sub": "user@example.com", "aud": "wrong-audience",
+         "exp": now + timedelta(hours=1), "iat": now},
+        secret="secret-key",
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        core_jwt.decode_token(token)
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail == "Invalid token claims"
+
+
+def test_missing_iss_returns_invalid_token_claims(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET", "secret-key")
+    monkeypatch.setenv("JWT_ISSUER", "laboria-backend")
+    monkeypatch.delenv("JWT_AUDIENCE", raising=False)
+    now = datetime.now(timezone.utc)
+    token = _encode_raw(
+        {"sub": "user@example.com", "exp": now + timedelta(hours=1), "iat": now},
+        secret="secret-key",
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        core_jwt.decode_token(token)
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail == "Invalid token claims"
+
+
 # ── error messages no exponen detalles sensibles ──────────────────────────────
 
 def test_error_detail_does_not_expose_secret(monkeypatch):

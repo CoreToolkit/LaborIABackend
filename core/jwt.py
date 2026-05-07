@@ -119,6 +119,8 @@ def decode_token(token: str) -> dict:
 
     except HTTPException:
         raise
+    except (InvalidIssuerError, InvalidAudienceError, MissingRequiredClaimError):
+        raise HTTPException(status_code=401, detail="Invalid token claims")
     except InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
     except Exception:
