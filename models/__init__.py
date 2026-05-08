@@ -16,4 +16,5 @@ from models.group_interview_round import GroupInterviewRound, GroupInterviewRoun
 from models.user_metrics import UserMetrics
 from models.recommendation import Recommendation
 from models.badge import Badge, UserBadge
+from models.improvement_plan import ImprovementPlan, ImprovementPlanItem, ImprovementPlanHistory
 
