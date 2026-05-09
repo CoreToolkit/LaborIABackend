@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import os
+import threading
+import time
 
 import httpx
 from dotenv import load_dotenv
@@ -13,6 +15,9 @@ MAX_TTS_TEXT_LENGTH = 500
 _DEFAULT_TIMEOUT = 30
 _DEFAULT_MAX_RETRIES = 2
 _RETRY_BACKOFF_BASE = 1.0  # segundos; espera = base * intento
+_ELEVENLABS_MAX_CONCURRENT = int(os.getenv("ELEVENLABS_MAX_CONCURRENT", "5"))
+_ELEVENLABS_ACQUIRE_TIMEOUT = int(os.getenv("ELEVENLABS_ACQUIRE_TIMEOUT", "5"))
+_elevenlabs_semaphore = threading.BoundedSemaphore(_ELEVENLABS_MAX_CONCURRENT)
 
 
 class ElevenLabsService:
@@ -105,15 +110,32 @@ class ElevenLabsService:
         if not self.voice_id:
             raise RuntimeError("Falta la variable de entorno de ElevenLabs: ELEVENLABS_VOICE_ID")
 
-        response = await self.post(
-            path=f"/text-to-speech/{self.voice_id}",
-            json={
-                "text": normalized_text,
-                "model_id": self.model_id,
-            },
-            params={"output_format": "mp3_44100_128"},
-            headers={"Accept": "audio/mpeg"},
+        acquired = await asyncio.to_thread(
+            _elevenlabs_semaphore.acquire,
+            True,
+            _ELEVENLABS_ACQUIRE_TIMEOUT,
         )
+        if not acquired:
+            raise Exception("ElevenLabs esta saturado temporalmente")
+
+        try:
+            start = time.monotonic()
+            response = await self.post(
+                path=f"/text-to-speech/{self.voice_id}",
+                json={
+                    "text": normalized_text,
+                    "model_id": self.model_id,
+                },
+                params={"output_format": "mp3_44100_128"},
+                headers={"Accept": "audio/mpeg"},
+            )
+            logger.info(
+                "elevenlabs.generate_speech duration_ms=%s text_len=%s",
+                round((time.monotonic() - start) * 1000, 1),
+                len(normalized_text),
+            )
+        finally:
+            _elevenlabs_semaphore.release()
 
         audio_bytes = response.content
         if not audio_bytes:

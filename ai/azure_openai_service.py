@@ -1,8 +1,18 @@
+import asyncio
+import logging
 import os
+import threading
+import time
 from dotenv import load_dotenv
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncAzureOpenAI
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
+
+_AZURE_OPENAI_MAX_CONCURRENT = int(os.getenv("AZURE_OPENAI_MAX_CONCURRENT", "5"))
+_AZURE_OPENAI_ACQUIRE_TIMEOUT = int(os.getenv("AZURE_OPENAI_ACQUIRE_TIMEOUT", "10"))
+_azure_openai_semaphore = threading.BoundedSemaphore(_AZURE_OPENAI_MAX_CONCURRENT)
 
 
 class AzureOpenAIService:
@@ -74,6 +84,13 @@ class AzureOpenAIService:
         top_p: float = None,
     ) -> str:
         self._require_configuration()
+        acquired = await asyncio.to_thread(
+            _azure_openai_semaphore.acquire,
+            True,
+            _AZURE_OPENAI_ACQUIRE_TIMEOUT,
+        )
+        if not acquired:
+            raise Exception("Azure OpenAI esta saturado temporalmente")
 
         kwargs = {
             "model": self.deployment_name,
@@ -90,8 +107,15 @@ class AzureOpenAIService:
             kwargs["top_p"] = top_p
 
         try:
+            start = time.monotonic()
             response = await self.client.chat.completions.create(**kwargs)
             content = response.choices[0].message.content if response.choices else ""
+            logger.info(
+                "azure_openai.chat duration_ms=%s deployment=%s max_tokens=%s",
+                round((time.monotonic() - start) * 1000, 1),
+                self.deployment_name,
+                max_tokens,
+            )
             return (content or "").strip()
 
         except APITimeoutError:
@@ -103,3 +127,5 @@ class AzureOpenAIService:
             raise Exception(f"Azure OpenAI devolvio error HTTP: {detail}")
         except Exception as e:
             raise Exception(f"Error en Azure OpenAI: {str(e)}")
+        finally:
+            _azure_openai_semaphore.release()

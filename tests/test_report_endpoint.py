@@ -68,6 +68,24 @@ class TestGetSessionReport:
         assert data["session_id"] == 1
         assert data["session_score"] == 72.5
         assert data["total_questions"] == 3
+        MockService.return_value.get_session_report.assert_called_once_with(
+            session_id=1,
+            user_id=1,
+            unlock_badges=False,
+        )
+
+    def test_desbloqueo_de_badges_requiere_parametro_explicito(self):
+        db = MagicMock()
+        with patch("api.interviews.ReportService") as MockService:
+            MockService.return_value.get_session_report.return_value = _base_report()
+            response = _make_client(db).get("/api/interviews/1/report?unlock_badges=true")
+
+        assert response.status_code == 200
+        MockService.return_value.get_session_report.assert_called_once_with(
+            session_id=1,
+            user_id=1,
+            unlock_badges=True,
+        )
 
     def test_404_si_sesion_no_existe(self):
         db = MagicMock()
@@ -171,6 +189,24 @@ class TestListSessionReports:
         assert data[1]["session_id"] == 1
         assert data[0]["session_score"] == 80.0
         assert data[0]["completed_questions"] == 3
+        MockService.return_value.list_session_reports.assert_called_once_with(
+            user_id=1,
+            limit=3,
+            offset=0,
+        )
+
+    def test_historial_usa_paginacion(self):
+        db = MagicMock()
+        with patch("api.interviews.ReportService") as MockService:
+            MockService.return_value.list_session_reports.return_value = []
+            response = _make_client(db).get("/api/interviews/reports?limit=5&offset=10")
+
+        assert response.status_code == 200
+        MockService.return_value.list_session_reports.assert_called_once_with(
+            user_id=1,
+            limit=5,
+            offset=10,
+        )
 
     def test_historial_vacio_retorna_lista_vacia(self):
         db = MagicMock()
