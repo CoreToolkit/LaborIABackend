@@ -135,8 +135,13 @@ class AzureSpeechService:
             transcriber.canceled.connect(handle_stop)
 
             transcriber.start_transcribing_async().get()
-            while not done:
+            timeout_s = 30  
+            elapsed = 0.0
+            while not done and elapsed < timeout_s:
                 time.sleep(0.1)
+                elapsed += 0.1
+            if not done:
+                logger.warning("transcribe_with_diarization timeout after %.1f seconds", elapsed)
             transcriber.stop_transcribing_async().get()
 
             if not segments:

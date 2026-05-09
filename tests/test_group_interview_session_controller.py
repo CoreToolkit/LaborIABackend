@@ -881,9 +881,7 @@ def test_broadcast_reaches_all_participants_in_room(monkeypatch):
         ("user3", _FakeWS("user3")),
     ]
 
-    asyncio.get_event_loop().run_until_complete(
-        mgr.broadcast_text('{"event":"test"}', "ROOM1", sender_id="")
-    )
+    asyncio.run(mgr.broadcast_text('{"event":"test"}', "ROOM1", sender_id=""))
 
     assert len(received["user1"]) == 1
     assert len(received["user2"]) == 1
@@ -916,9 +914,7 @@ def test_broadcast_continues_after_one_connection_fails(monkeypatch):
     ]
 
     # No debe lanzar excepción
-    asyncio.get_event_loop().run_until_complete(
-        mgr.broadcast_text('{"event":"test"}', "ROOM2", sender_id="")
-    )
+    asyncio.run(mgr.broadcast_text('{"event":"test"}', "ROOM2", sender_id=""))
 
     # user1 y user3 deben haber recibido el mensaje a pesar del fallo de user2
     assert len(received["user1"]) == 1
@@ -943,9 +939,7 @@ def test_broadcast_isolation_between_rooms(monkeypatch):
     mgr.rooms["ROOMA"] = [("roomA_user", _FakeWS("roomA_user"))]
     mgr.rooms["ROOMB"] = [("roomB_user", _FakeWS("roomB_user"))]
 
-    asyncio.get_event_loop().run_until_complete(
-        mgr.broadcast_text('{"event":"only_for_A"}', "ROOMA", sender_id="")
-    )
+    asyncio.run(mgr.broadcast_text('{"event":"only_for_A"}', "ROOMA", sender_id=""))
 
     assert len(received["roomA_user"]) == 1
     assert len(received["roomB_user"]) == 0, "El evento de ROOMA no debe llegar a ROOMB"

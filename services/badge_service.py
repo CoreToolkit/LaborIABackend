@@ -70,65 +70,74 @@ class BadgeService:
         return 0.0
 
     def _get_best_session_score(self, user_id: int) -> float | None:
+        from sqlalchemy import func as sqlfunc
         from models.evaluation import Evaluation, EvaluationStatus
         from models.interview_session import InterviewSession
 
-        sessions = (
-            self.db.query(InterviewSession)
-            .filter(InterviewSession.user_id == user_id)
+        # Una sola query: obtener todos los session_ids con su score promedio.
+        # Evita N+1: en lugar de N sesiones + N queries de evaluaciones, 
+        # una sola query con join y group_by.
+        rows = (
+            self.db.query(
+                InterviewSession.id,
+                sqlfunc.avg(Evaluation.score).label('avg_score')
+            )
+            .join(Evaluation, Evaluation.interview_session_id == InterviewSession.id)
+            .filter(
+                InterviewSession.user_id == user_id,
+                Evaluation.status == EvaluationStatus.COMPLETED,
+                Evaluation.score >= 0,
+            )
+            .group_by(InterviewSession.id)
             .all()
         )
-        best: float | None = None
-        for session in sessions:
-            evals = (
-                self.db.query(Evaluation)
-                .filter(
-                    Evaluation.interview_session_id == session.id,
-                    Evaluation.status == EvaluationStatus.COMPLETED,
-                    Evaluation.score >= 0,
-                )
-                .all()
-            )
-            valid = [e.score for e in evals if e.score is not None]
-            if valid:
-                avg = sum(valid) / len(valid)
-                if best is None or avg > best:
-                    best = avg
-        return best
+        
+        if not rows:
+            return None
+        
+        # Retorna el máximo promedio de todas las sesiones
+        best = max(row.avg_score for row in rows if row.avg_score is not None)
+        return round(best, 2) if best is not None else None
 
     def _get_best_score_improvement(self, user_id: int) -> float | None:
+        from sqlalchemy import func as sqlfunc
         from models.evaluation import Evaluation, EvaluationStatus
         from models.interview_session import InterviewSession
 
-        sessions = (
-            self.db.query(InterviewSession)
-            .filter(InterviewSession.user_id == user_id)
+        # Una sola query: obtener todas las sesiones del usuario con su score promedio,
+        # ordenadas por fecha. Evita N+1 (N sesiones + N queries de evaluaciones).
+        rows = (
+            self.db.query(
+                InterviewSession.id,
+                InterviewSession.created_at,
+                sqlfunc.avg(Evaluation.score).label('avg_score')
+            )
+            .join(Evaluation, Evaluation.interview_session_id == InterviewSession.id)
+            .filter(
+                InterviewSession.user_id == user_id,
+                Evaluation.status == EvaluationStatus.COMPLETED,
+                Evaluation.score >= 0,
+            )
+            .group_by(InterviewSession.id, InterviewSession.created_at)
             .order_by(InterviewSession.created_at.asc())
             .all()
         )
-        scores: list[float] = []
-        for session in sessions:
-            evals = (
-                self.db.query(Evaluation)
-                .filter(
-                    Evaluation.interview_session_id == session.id,
-                    Evaluation.status == EvaluationStatus.COMPLETED,
-                    Evaluation.score >= 0,
-                )
-                .all()
-            )
-            valid = [e.score for e in evals if e.score is not None]
-            if valid:
-                scores.append(sum(valid) / len(valid))
 
+        if len(rows) < 2:
+            return None
+        
+        # Calcular mejora máxima entre sesiones consecutivas
+        scores = [row.avg_score for row in rows if row.avg_score is not None]
         if len(scores) < 2:
             return None
+        
         best_improvement: float | None = None
         for i in range(1, len(scores)):
             diff = scores[i] - scores[i - 1]
             if best_improvement is None or diff > best_improvement:
                 best_improvement = diff
-        return best_improvement
+        
+        return round(best_improvement, 2) if best_improvement is not None else None
 
     def check_and_unlock_badges(
         self,
