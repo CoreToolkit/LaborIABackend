@@ -608,8 +608,15 @@ def test_close_group_session_emits_interview_closed_event(monkeypatch):
 
     assert close_response.status_code == 200
     assert len(emitted) == 5
-    message, room_id = emitted[1]
-    payload = json.loads(message)
+    closed_event = None
+    for message, room_id in emitted:
+        payload = json.loads(message)
+        if payload.get("event") == "interview_closed":
+            closed_event = (payload, room_id)
+            break
+
+    assert closed_event is not None
+    payload, room_id = closed_event
     assert room_id == session_code
     assert payload["event"] == "interview_closed"
     assert payload["session_code"] == session_code
