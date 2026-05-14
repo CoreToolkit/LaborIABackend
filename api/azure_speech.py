@@ -1,3 +1,5 @@
+import os
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from starlette.concurrency import run_in_threadpool
 
@@ -10,6 +12,28 @@ router = APIRouter(
     prefix="/ai/azure-speech",
     tags=["azure-speech"],
 )
+
+MAX_AUDIO_UPLOAD_BYTES = int(os.getenv("MAX_AUDIO_UPLOAD_BYTES", str(10 * 1024 * 1024)))
+_READ_CHUNK_SIZE = 1024 * 1024
+
+
+async def _read_upload_file_limited(file: UploadFile) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+
+    while True:
+        chunk = await file.read(_READ_CHUNK_SIZE)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX_AUDIO_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"El archivo de audio supera el limite de {MAX_AUDIO_UPLOAD_BYTES} bytes",
+            )
+        chunks.append(chunk)
+
+    return b"".join(chunks)
 
 azure_speech_init_error = None
 azure_speech_service = None
@@ -52,7 +76,7 @@ async def transcribe_audio(
         if azure_speech_init_error:
             raise HTTPException(status_code=503, detail=azure_speech_init_error)
 
-        audio_bytes = await file.read()
+        audio_bytes = await _read_upload_file_limited(file)
         if not audio_bytes:
             raise HTTPException(status_code=400, detail="'file' es requerido")
 
@@ -84,7 +108,7 @@ async def transcribe_audio_with_diarization(
         if azure_speech_init_error:
             raise HTTPException(status_code=503, detail=azure_speech_init_error)
 
-        audio_bytes = await file.read()
+        audio_bytes = await _read_upload_file_limited(file)
         if not audio_bytes:
             raise HTTPException(status_code=400, detail="'file' es requerido")
 

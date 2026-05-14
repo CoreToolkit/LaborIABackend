@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
 from core.database import get_db
@@ -18,14 +18,26 @@ router = APIRouter(
 @router.get("")
 def list_sessions(
     response: Response,
+    limit: int | None = Query(default=None, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    include_meta: bool = Query(default=False),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
     service = InterviewSessionService(db)
-    sessions = service.list_sessions(current_user["id"])
+    sessions = service.list_sessions(current_user["id"], limit=limit, offset=offset)
 
     response.status_code = status.HTTP_200_OK
-    return [InterviewSessionResponse.model_validate(session).model_dump(mode="json") for session in sessions]
+    items = [InterviewSessionResponse.model_validate(session).model_dump(mode="json") for session in sessions]
+    if not include_meta:
+        return items
+
+    return {
+        "items": items,
+        "total": service.count_sessions(current_user["id"]),
+        "limit": limit,
+        "offset": offset,
+    }
 
 @router.post("")
 def create_session(
