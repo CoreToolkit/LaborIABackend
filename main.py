@@ -92,6 +92,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(profiles.router)
 app.include_router(profiles.router, prefix="/api")
+app.include_router(profiles.profile_alias_router, prefix="/api")
 app.include_router(roles.router, prefix="/api")
 app.include_router(questions.router, prefix="/api")
 app.include_router(sessions.router, prefix="/api")

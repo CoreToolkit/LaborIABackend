@@ -8,8 +8,10 @@ from core.database import SessionLocal
 from services.token_service import validate_jwt_token
 import json
 import logging
+import os
 
 logger = logging.getLogger(__name__)
+WEBSOCKET_AUTH_REQUIRED = os.getenv("WEBSOCKET_AUTH_REQUIRED", "false").lower() == "true"
 
 #from core.database import get_db
 #from core.jwt import get_current_user
@@ -32,31 +34,32 @@ async def websocket_endpoint(websocket: WebSocket, session_code: str, user_id: s
 
     token = websocket.query_params.get("token")
     auth_header = websocket.headers.get("authorization")
-    if not token and auth_header and auth_header.startswith("Bearer "):
-        token = auth_header.removeprefix("Bearer ").strip()
+    if not token and auth_header and auth_header.lower().startswith("bearer "):
+        token = auth_header.split(" ", 1)[1].strip()
 
     if not token:
         logger.warning("WebSocket connection missing token: %s/%s", session_code, user_id)
-        await websocket.close(code=1008, reason="missing_token")
-        return
+        if WEBSOCKET_AUTH_REQUIRED:
+            await websocket.close(code=1008, reason="missing_token")
+            return
+    else:
+        try:
+            payload = validate_jwt_token(token)
+            token_user_id = int(payload.get("id"))
+        except Exception:
+            logger.warning("WebSocket connection rejected by invalid token: %s/%s", session_code, user_id)
+            await websocket.close(code=1008, reason="invalid_token")
+            return
 
-    try:
-        payload = validate_jwt_token(token)
-        token_user_id = int(payload.get("id"))
-    except Exception:
-        logger.warning("WebSocket connection rejected by invalid token: %s/%s", session_code, user_id)
-        await websocket.close(code=1008, reason="invalid_token")
-        return
-
-    if token_user_id != parsed_user_id:
-        logger.warning(
-            "WebSocket user mismatch: path_user=%s token_user=%s session=%s",
-            parsed_user_id,
-            token_user_id,
-            session_code,
-        )
-        await websocket.close(code=1008, reason="user_mismatch")
-        return
+        if token_user_id != parsed_user_id:
+            logger.warning(
+                "WebSocket user mismatch: path_user=%s token_user=%s session=%s",
+                parsed_user_id,
+                token_user_id,
+                session_code,
+            )
+            await websocket.close(code=1008, reason="user_mismatch")
+            return
 
     db = SessionLocal()
     room_id: str | None = None
