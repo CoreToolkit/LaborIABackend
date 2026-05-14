@@ -223,28 +223,24 @@ class BadgeService:
         from models.evaluation import Evaluation, EvaluationStatus
         from models.interview_session import InterviewSession
 
-        prev_sessions = (
-            self.db.query(InterviewSession)
+        row = (
+            self.db.query(
+                InterviewSession.id,
+                sqlfunc.avg(Evaluation.score).label("avg_score"),
+            )
+            .join(Evaluation, Evaluation.interview_session_id == InterviewSession.id)
             .filter(
                 InterviewSession.user_id == user_id,
                 InterviewSession.id != current_session_id,
+                Evaluation.status == EvaluationStatus.COMPLETED,
+                Evaluation.score >= 0,
             )
+            .group_by(InterviewSession.id, InterviewSession.created_at)
             .order_by(InterviewSession.created_at.desc())
-            .all()
+            .first()
         )
 
-        for session in prev_sessions:
-            evals = (
-                self.db.query(Evaluation)
-                .filter(
-                    Evaluation.interview_session_id == session.id,
-                    Evaluation.status == EvaluationStatus.COMPLETED,
-                    Evaluation.score >= 0,
-                )
-                .all()
-            )
-            valid = [e.score for e in evals if e.score is not None]
-            if valid:
-                return round(sum(valid) / len(valid), 2)
+        if not row or row.avg_score is None:
+            return None
 
-        return None
+        return round(float(row.avg_score), 2)

@@ -24,12 +24,29 @@ class InterviewSessionRepository:
         self.db.refresh(session)
         return session
 
-    def list_by_user_id(self, user_id: int) -> list[InterviewSession]:
-        return (
+    def list_by_user_id(
+        self,
+        user_id: int,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[InterviewSession]:
+        query = (
             self.db.query(InterviewSession)
             .filter(InterviewSession.user_id == user_id)
             .order_by(InterviewSession.created_at.desc(), InterviewSession.id.desc())
-            .all()
+        )
+        if offset:
+            query = query.offset(offset)
+        if limit is not None:
+            query = query.limit(limit)
+        return query.all()
+
+    def count_by_user_id(self, user_id: int) -> int:
+        return (
+            self.db.query(InterviewSession)
+            .filter(InterviewSession.user_id == user_id)
+            .count()
         )
 
     def get_by_id_and_user_id(self, session_id: int, user_id: int) -> InterviewSession | None:

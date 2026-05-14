@@ -2,6 +2,8 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
 from core.database import engine, Base
 import models
 from fastapi.middleware.cors import CORSMiddleware
@@ -39,10 +41,11 @@ from middleware.auth_middleware import AuthMiddleware
 from core.limiter import auth_rate_limiter, rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-try:
-    Base.metadata.create_all(bind=engine)
-except Exception as e:
-    print(f"Could not create tables: {e}")
+if os.getenv("AUTO_CREATE_TABLES", "false").lower() == "true":
+    try:
+        Base.metadata.create_all(bind=engine)
+    except Exception as e:
+        print(f"Could not create tables: {e}")
 
 
 app = FastAPI()
@@ -89,6 +92,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(profiles.router)
 app.include_router(profiles.router, prefix="/api")
+app.include_router(profiles.profile_alias_router, prefix="/api")
 app.include_router(roles.router, prefix="/api")
 app.include_router(questions.router, prefix="/api")
 app.include_router(sessions.router, prefix="/api")
@@ -106,5 +110,29 @@ app.include_router(elevenlabs.router, prefix="/api")
 app.include_router(websockets.router, prefix="/api")
 app.include_router(badges_router, prefix="/api")
 app.include_router(improvement_plan_router, prefix="/api")
+
+
+@app.get("/health/live", tags=["health"])
+def live_check():
+    return {"status": "ok"}
+
+
+@app.get("/health/ready", tags=["health"])
+def ready_check():
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except Exception:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "degraded", "database": "unavailable"},
+        )
+
+    return {"status": "ready", "database": "ok"}
+
+
+@app.get("/health", tags=["health"])
+def health_check():
+    return live_check()
 
 

@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from uuid import UUID as PyUUID
 
@@ -37,6 +38,8 @@ router = APIRouter(
 )
 
 logger = logging.getLogger(__name__)
+MAX_AUDIO_UPLOAD_BYTES = int(os.getenv("MAX_AUDIO_UPLOAD_BYTES", str(10 * 1024 * 1024)))
+_READ_CHUNK_SIZE = 1024 * 1024
 
 
 def _session_timestamp(session) -> str:
@@ -53,6 +56,25 @@ async def _broadcast_group_event(session_code: str, event_payload: dict):
         )
     except Exception:
         logger.exception("Failed broadcasting event for group session %s", session_code)
+
+
+async def _read_upload_file_limited(file: UploadFile) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+
+    while True:
+        chunk = await file.read(_READ_CHUNK_SIZE)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX_AUDIO_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"El archivo de audio supera el limite de {MAX_AUDIO_UPLOAD_BYTES} bytes",
+            )
+        chunks.append(chunk)
+
+    return b"".join(chunks)
 
 
 @router.post("")
@@ -396,7 +418,7 @@ async def submit_audio_answer(
     if not question:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No hay pregunta registrada para esta ronda.")
 
-    audio_bytes = await audio_file.read()
+    audio_bytes = await _read_upload_file_limited(audio_file)
     await audio_file.close()
     if not audio_bytes:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El archivo de audio está vacío.")

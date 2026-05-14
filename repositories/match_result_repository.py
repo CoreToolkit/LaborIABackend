@@ -2,6 +2,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from models.job_role import JobRole
 from models.match_result import MatchResult
+from models.role_skill import RoleSkill
 
 
 class MatchResultRepository:
@@ -15,7 +16,11 @@ class MatchResultRepository:
         return (
             self.db.query(MatchResult)
             .join(MatchResult.job_role)
-            .options(joinedload(MatchResult.job_role))
+            .options(
+                joinedload(MatchResult.job_role)
+                .selectinload(JobRole.role_skills)
+                .selectinload(RoleSkill.technology)
+            )
             .filter(MatchResult.user_id == user_id, JobRole.active.is_(True))
             .order_by(MatchResult.total_score.desc(), MatchResult.id.asc())
             .limit(limit)
