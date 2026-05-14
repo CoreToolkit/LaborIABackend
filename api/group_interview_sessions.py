@@ -205,6 +205,29 @@ async def start_group_session(
         },
     )
 
+    orchestrator = GroupInterviewOrchestratorService(db)
+    try:
+        intro_result = await orchestrator.generate_intro_round(
+            session_code=session.session_code,
+            requester_id=current_user["id"],
+        )
+        if intro_result:
+            _, _, _, event_payloads = intro_result
+            await _broadcast_group_event(
+                session.session_code,
+                event_payloads.round_started,
+            )
+            await _broadcast_group_event(
+                session.session_code,
+                event_payloads.question_generated,
+            )
+            await _broadcast_group_event(
+                session.session_code,
+                event_payloads.audio_event,
+            )
+    except Exception:
+        logger.exception("Error generando introduccion de sesion %s", session.session_code)
+
     response.status_code = status.HTTP_200_OK
     return GroupInterviewSessionResponseSchema.model_validate(session).model_dump(mode="json")
 

@@ -123,7 +123,9 @@ class GroupInterviewOrchestratorService:
         previous_questions = [
             item.question_text.strip()
             for item in previous_rounds
-            if item.question_text and item.question_text.strip()
+            if item.question_text
+            and item.question_text.strip()
+            and not self._is_intro_round(item)
         ]
 
         role_name = group_session.role.name if group_session.role else "rol tecnico"
@@ -167,6 +169,7 @@ class GroupInterviewOrchestratorService:
             "text_generation_ms": text_elapsed_ms,
             "tts_status": tts_result.tts_status,
             "tts_elapsed_ms": tts_result.tts_elapsed_ms,
+            "is_intro": False,
         }
         if tts_result.tts_error:
             round_metadata["tts_error"] = tts_result.tts_error
@@ -192,6 +195,59 @@ class GroupInterviewOrchestratorService:
         self._persist_round_questions(group_session_id=group_session.id, round_item=round_item)
 
         # AB#323: construir payloads de eventos aquí, no en el router
+        event_payloads = self._build_round_event_payloads(
+            session_code=group_session.session_code,
+            round_item=round_item,
+            tts_result=tts_result,
+        )
+
+        return group_session, round_item, tts_result, event_payloads
+
+    async def generate_intro_round(
+        self,
+        session_code: str,
+        requester_id: int,
+    ):
+        """
+        Genera y emite la introduccion inicial (una sola vez) con TTS.
+        Retorna (group_session, round_item, tts_result, event_payloads) o None si ya existe una ronda.
+        """
+        group_session = self.group_session_service.get_group_session_by_code(session_code)
+
+        if group_session.host_id != requester_id:
+            raise PermissionError("Solo el host puede iniciar la introduccion")
+
+        if group_session.status != "in_progress":
+            raise ValueError("La sesión grupal debe estar en estado 'in_progress'")
+
+        previous_rounds = self.round_service.round_repo.list_by_session_id(group_session.id)
+        if previous_rounds:
+            return None
+
+        role_name = group_session.role.name if group_session.role else "rol tecnico"
+        role_description = group_session.role.description if group_session.role else ""
+        intro_text = self._build_intro_text(role_name=role_name, role_description=role_description)
+
+        tts_result = await self._generate_tts_with_fallback(intro_text)
+
+        round_metadata = {
+            "text_generation_ms": 0,
+            "tts_status": tts_result.tts_status,
+            "tts_elapsed_ms": tts_result.tts_elapsed_ms,
+            "is_intro": True,
+        }
+        if tts_result.tts_error:
+            round_metadata["tts_error"] = tts_result.tts_error
+
+        round_item = self.round_service.create_next_round(
+            group_session_id=group_session.id,
+            question_text=intro_text,
+            target_skill=None,
+            difficulty=group_session.difficulty or "intro",
+            created_by=requester_id,
+            metadata_json=round_metadata,
+        )
+
         event_payloads = self._build_round_event_payloads(
             session_code=group_session.session_code,
             round_item=round_item,
@@ -254,12 +310,14 @@ class GroupInterviewOrchestratorService:
         """
         emitted_at = datetime.now(timezone.utc).isoformat()
         round_id = str(round_item.id)
+        is_intro = self._is_intro_round(round_item)
 
         round_started = {
             "event": "round_started",
             "session_code": session_code,
             "round_id": round_id,
             "round_index": round_item.round_index,
+            "is_intro": is_intro,
             "emitted_at": emitted_at,
         }
 
@@ -271,6 +329,7 @@ class GroupInterviewOrchestratorService:
             "question_text": round_item.question_text,
             "target_skill": round_item.target_skill,
             "difficulty": round_item.difficulty,
+            "is_intro": is_intro,
             "emitted_at": emitted_at,
         }
 
@@ -283,6 +342,7 @@ class GroupInterviewOrchestratorService:
                 "round_index": round_item.round_index,
                 "audio_b64": tts_result.audio_b64,
                 "question_text": round_item.question_text,
+                "is_intro": is_intro,
                 "emitted_at": emitted_at,
             }
         else:
@@ -294,6 +354,7 @@ class GroupInterviewOrchestratorService:
                 # AB#325: mensaje seguro, nunca detalle crudo del proveedor
                 "tts_error": tts_result.tts_error or _TTS_SAFE_ERROR_MSG,
                 "question_text": round_item.question_text,
+                "is_intro": is_intro,
                 "emitted_at": emitted_at,
             }
 
@@ -342,3 +403,26 @@ class GroupInterviewOrchestratorService:
                 tts_error=_TTS_SAFE_ERROR_MSG,
                 tts_elapsed_ms=tts_elapsed_ms,
             )
+
+    @staticmethod
+    def _is_intro_round(round_item) -> bool:
+        metadata = getattr(round_item, "metadata_json", None)
+        if isinstance(metadata, dict):
+            return bool(metadata.get("is_intro"))
+        return False
+
+    @staticmethod
+    def _build_intro_text(*, role_name: str, role_description: str) -> str:
+        role_name = role_name.strip() or "rol tecnico"
+        role_description = role_description.strip()
+        intro = (
+            "Bienvenidos a la entrevista grupal de LaborIA. "
+            f"Nos enfocaremos en el rol {role_name}. "
+        )
+        if role_description:
+            intro += f"Este rol se centra en {role_description}. "
+        intro += (
+            "Hablaremos de tu experiencia, los retos mas comunes del rol y "
+            "como abordarias situaciones reales. Empecemos."
+        )
+        return intro
