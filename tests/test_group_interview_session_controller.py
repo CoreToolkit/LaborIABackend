@@ -468,13 +468,26 @@ def test_start_group_session_emits_interview_started_event(monkeypatch):
     )
 
     assert start_response.status_code == 200
-    assert len(emitted) == 1
+    assert len(emitted) == 4
+
     message, room_id = emitted[0]
     payload = json.loads(message)
     assert room_id == session_code
     assert payload["event"] == "interview_started"
     assert payload["session_code"] == session_code
     assert payload["status"] == "in_progress"
+
+    round_started = json.loads(emitted[1][0])
+    question_generated = json.loads(emitted[2][0])
+    audio_event = json.loads(emitted[3][0])
+
+    assert round_started["event"] == "round_started"
+    assert question_generated["event"] == "question_generated"
+    assert audio_event["event"] in ("question_audio_ready", "tts_error")
+
+    assert round_started.get("is_intro") is True
+    assert question_generated.get("is_intro") is True
+    assert audio_event.get("is_intro") is True
 
 
 def test_start_group_session_not_host_returns_403():
@@ -594,9 +607,16 @@ def test_close_group_session_emits_interview_closed_event(monkeypatch):
     )
 
     assert close_response.status_code == 200
-    assert len(emitted) == 2
-    message, room_id = emitted[1]
-    payload = json.loads(message)
+    assert len(emitted) == 5
+    closed_event = None
+    for message, room_id in emitted:
+        payload = json.loads(message)
+        if payload.get("event") == "interview_closed":
+            closed_event = (payload, room_id)
+            break
+
+    assert closed_event is not None
+    payload, room_id = closed_event
     assert room_id == session_code
     assert payload["event"] == "interview_closed"
     assert payload["session_code"] == session_code
@@ -704,7 +724,7 @@ def test_create_next_round_creates_round_and_returns_200():
 
     assert next_round_response.status_code == 200
     payload = next_round_response.json()
-    assert payload["round_index"] == 1
+    assert payload["round_index"] == 2
     assert payload["difficulty"] == "intermediate"
     assert payload["target_skill"] == "Python"
     assert payload["question_text"]
@@ -810,7 +830,7 @@ def test_create_next_round_emits_question_audio_ready_on_tts_success(monkeypatch
     assert audio_event["audio_b64"] is not None
     assert audio_event["question_text"]
     assert audio_event["round_id"]
-    assert audio_event["round_index"] == 1
+    assert audio_event["round_index"] == 2
 
 
 def test_create_next_round_emits_tts_error_on_tts_failure(monkeypatch):
@@ -881,9 +901,7 @@ def test_broadcast_reaches_all_participants_in_room(monkeypatch):
         ("user3", _FakeWS("user3")),
     ]
 
-    asyncio.get_event_loop().run_until_complete(
-        mgr.broadcast_text('{"event":"test"}', "ROOM1", sender_id="")
-    )
+    asyncio.run(mgr.broadcast_text('{"event":"test"}', "ROOM1", sender_id=""))
 
     assert len(received["user1"]) == 1
     assert len(received["user2"]) == 1
@@ -916,9 +934,7 @@ def test_broadcast_continues_after_one_connection_fails(monkeypatch):
     ]
 
     # No debe lanzar excepción
-    asyncio.get_event_loop().run_until_complete(
-        mgr.broadcast_text('{"event":"test"}', "ROOM2", sender_id="")
-    )
+    asyncio.run(mgr.broadcast_text('{"event":"test"}', "ROOM2", sender_id=""))
 
     # user1 y user3 deben haber recibido el mensaje a pesar del fallo de user2
     assert len(received["user1"]) == 1
@@ -943,9 +959,7 @@ def test_broadcast_isolation_between_rooms(monkeypatch):
     mgr.rooms["ROOMA"] = [("roomA_user", _FakeWS("roomA_user"))]
     mgr.rooms["ROOMB"] = [("roomB_user", _FakeWS("roomB_user"))]
 
-    asyncio.get_event_loop().run_until_complete(
-        mgr.broadcast_text('{"event":"only_for_A"}', "ROOMA", sender_id="")
-    )
+    asyncio.run(mgr.broadcast_text('{"event":"only_for_A"}', "ROOMA", sender_id=""))
 
     assert len(received["roomA_user"]) == 1
     assert len(received["roomB_user"]) == 0, "El evento de ROOMA no debe llegar a ROOMB"

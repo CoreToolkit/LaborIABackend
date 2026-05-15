@@ -1,6 +1,8 @@
 import gc
+import logging
 import os
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -8,6 +10,13 @@ from dotenv import load_dotenv
 import azure.cognitiveservices.speech as speechsdk
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
+
+_AZURE_SPEECH_MAX_CONCURRENT = int(os.getenv("AZURE_SPEECH_MAX_CONCURRENT", "5"))
+_AZURE_SPEECH_ACQUIRE_TIMEOUT = int(os.getenv("AZURE_SPEECH_ACQUIRE_TIMEOUT", "5"))
+_azure_speech_semaphore = threading.BoundedSemaphore(_AZURE_SPEECH_MAX_CONCURRENT)
+_azure_speech_state = threading.local()
 
 
 class AzureSpeechService:
@@ -32,6 +41,20 @@ class AzureSpeechService:
             subscription=self.speech_key,
             region=self.speech_region,
         )
+
+    def _acquire_slot(self) -> bool:
+        if getattr(_azure_speech_state, "acquired", False):
+            return False
+        acquired = _azure_speech_semaphore.acquire(True, _AZURE_SPEECH_ACQUIRE_TIMEOUT)
+        if not acquired:
+            raise Exception("Azure Speech esta saturado temporalmente")
+        _azure_speech_state.acquired = True
+        return True
+
+    def _release_slot(self, should_release: bool) -> None:
+        if should_release:
+            _azure_speech_state.acquired = False
+            _azure_speech_semaphore.release()
 
     async def health_check(self) -> bool:
         """Verifica que la configuracion base de Azure Speech este cargada."""
@@ -91,6 +114,8 @@ class AzureSpeechService:
 
         Si el entorno no soporta diarizacion, hace fallback a un unico speaker.
         """
+        slot_owner = self._acquire_slot()
+        start = time.monotonic()
         temp_path = None
         audio_config = None
         transcriber = None
@@ -135,8 +160,13 @@ class AzureSpeechService:
             transcriber.canceled.connect(handle_stop)
 
             transcriber.start_transcribing_async().get()
-            while not done:
+            timeout_s = 30  
+            elapsed = 0.0
+            while not done and elapsed < timeout_s:
                 time.sleep(0.1)
+                elapsed += 0.1
+            if not done:
+                logger.warning("transcribe_with_diarization timeout after %.1f seconds", elapsed)
             transcriber.stop_transcribing_async().get()
 
             if not segments:
@@ -144,6 +174,11 @@ class AzureSpeechService:
                 return self._single_speaker_result(base_text)
 
             full_text = " ".join(segment["text"] for segment in segments).strip()
+            logger.info(
+                "azure_speech.transcribe_with_diarization duration_ms=%s segments=%s",
+                round((time.monotonic() - start) * 1000, 1),
+                len(segments),
+            )
             return {
                 "text": full_text,
                 "segments": segments,
@@ -154,6 +189,7 @@ class AzureSpeechService:
             transcriber = None
             audio_config = None
             gc.collect()
+            self._release_slot(slot_owner)
             self._cleanup_temp_file(temp_path)
 
     def transcribe_compressed_audio(self, audio_bytes: bytes, language: str = None) -> str:
@@ -161,6 +197,8 @@ class AzureSpeechService:
         Transcribe audio comprimido (webm/opus del navegador) usando PushAudioInputStream.
         El método estándar transcribe_audio falla con webm porque espera cabecera WAV.
         """
+        slot_owner = self._acquire_slot()
+        start = time.monotonic()
         push_stream = None
         recognizer = None
 
@@ -190,7 +228,13 @@ class AzureSpeechService:
             result = recognizer.recognize_once_async().get()
 
             if result.reason == speechsdk.ResultReason.RecognizedSpeech:
-                return (result.text or "").strip()
+                text = (result.text or "").strip()
+                logger.info(
+                    "azure_speech.transcribe_compressed_audio duration_ms=%s text_len=%s",
+                    round((time.monotonic() - start) * 1000, 1),
+                    len(text),
+                )
+                return text
 
             if result.reason == speechsdk.ResultReason.NoMatch:
                 return ""
@@ -213,6 +257,7 @@ class AzureSpeechService:
                 except Exception:
                     pass
             gc.collect()
+            self._release_slot(slot_owner)
 
     def transcribe_audio(
         self,
@@ -223,6 +268,8 @@ class AzureSpeechService:
         """
         Transcribe el audio completo usando reconocimiento continuo.
         """
+        slot_owner = self._acquire_slot()
+        start = time.monotonic()
         temp_path = None
         suffix = Path(filename or "").suffix or ".wav"
         audio_config = None
@@ -283,7 +330,13 @@ class AzureSpeechService:
             if recognition_error:
                 raise recognition_error
 
-            return " ".join(all_text_parts).strip()
+            text = " ".join(all_text_parts).strip()
+            logger.info(
+                "azure_speech.transcribe_audio duration_ms=%s text_len=%s",
+                round((time.monotonic() - start) * 1000, 1),
+                len(text),
+            )
+            return text
 
         except Exception as e:
             raise Exception(f"Error en Azure Speech: {str(e)}")
@@ -291,6 +344,7 @@ class AzureSpeechService:
             recognizer = None
             audio_config = None
             gc.collect()
+            self._release_slot(slot_owner)
             self._cleanup_temp_file(temp_path)
 
     def _single_speaker_result(self, text: str) -> dict[str, Any]:

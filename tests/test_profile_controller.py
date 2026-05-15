@@ -26,6 +26,7 @@ test_engine = create_engine(f"sqlite:///{TEST_DB_PATH}")
 TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
 app = FastAPI()
 app.include_router(profiles_module.router)
+app.include_router(profiles_module.profile_alias_router, prefix="/api")
 client = TestClient(app)
 
 
@@ -120,6 +121,22 @@ def test_get_my_profile_not_found_returns_404():
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Profile not found"
+
+
+def test_legacy_profile_aliases_match_frontend_contract():
+    user = _create_user()
+    headers = _auth_headers_for_user(user)
+
+    created = client.post("/profiles", json={"full_name": "Alias User"}, headers=headers)
+    assert created.status_code == 201
+
+    profile_response = client.get("/api/profile/me", headers=headers)
+    assert profile_response.status_code == 200
+    assert profile_response.json()["full_name"] == "Alias User"
+
+    auth_response = client.get("/api/profile/auth-me", headers=headers)
+    assert auth_response.status_code == 200
+    assert auth_response.json()["id"] == user.id
 
 
 def test_update_and_delete_profile_flow():

@@ -6,4 +6,6 @@ class ElevenLabsSpeechRequest(BaseModel):
 
 
 class ElevenLabsSpeechResponse(BaseModel):
-    audio: str
+    audio: str | None
+    tts_status: str = "ok"
+    tts_error: str | None = None

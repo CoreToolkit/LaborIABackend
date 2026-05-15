@@ -22,6 +22,11 @@ router = APIRouter(
     tags=["Profiles"]
     )
 
+profile_alias_router = APIRouter(
+    prefix="/profile",
+    tags=["Profiles"],
+)
+
 
 def _serialize_profile(profile):
     return {
@@ -37,6 +42,14 @@ def _serialize_profile(profile):
         "preferred_employment_type": profile.preferred_employment_type.value if profile.preferred_employment_type else None,
         "salary_expectation": float(profile.salary_expectation) if profile.salary_expectation else None,
     }
+
+
+def _get_my_profile_payload(db: Session, user_id: int):
+    service = ProfileService(db)
+    profile = service.get_profile_by_user_id(user_id)
+    if not profile:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ProfileNotFoundError.default_message)
+    return _serialize_profile(profile)
 
 
 @router.post("")
@@ -66,15 +79,25 @@ def get_my_profile(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    service = ProfileService(db)
-    user_id = current_user["id"]
-
-    profile = service.get_profile_by_user_id(user_id)
-    if not profile:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ProfileNotFoundError.default_message)
-
     response.status_code = status.HTTP_200_OK
-    return _serialize_profile(profile)
+    return _get_my_profile_payload(db, current_user["id"])
+
+
+@profile_alias_router.get("/me", include_in_schema=False)
+def get_my_profile_alias(
+    response: Response,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    response.status_code = status.HTTP_200_OK
+    return _get_my_profile_payload(db, current_user["id"])
+
+
+@profile_alias_router.get("/auth-me", include_in_schema=False)
+def get_auth_me_alias(
+    current_user: dict = Depends(get_current_user),
+):
+    return current_user
 
 
 @router.put("/me")

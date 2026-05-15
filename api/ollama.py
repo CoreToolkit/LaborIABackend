@@ -12,6 +12,7 @@ from ai.question_deduplication import (
 from core.database import get_db
 from core.jwt import get_current_user
 from exceptions.profile_exceptions import ProfileNotFoundError
+from services.global_question_service import GlobalQuestionService
 from services.profile_service import ProfileService
 from utils.prompts.question_generation import (
     build_question_generation_prompts,
@@ -98,6 +99,7 @@ async def generate_interview_question(
         body = body or {}
 
         profile_service = ProfileService(db)
+        global_question_service = GlobalQuestionService(db)
         user_id = current_user["id"]
 
         profile = profile_service.get_profile_by_user_id(user_id)
@@ -114,7 +116,12 @@ async def generate_interview_question(
             body_previous_questions = [str(item) for item in raw_previous if str(item).strip()]
 
         backend_history = _question_history_by_user.get(user_id, [])
-        previous_questions = merge_previous_questions(body_previous_questions, backend_history)
+        global_history = global_question_service.list_all_questions_texts()
+        previous_questions = merge_previous_questions(
+            body_previous_questions,
+            backend_history,
+            global_history,
+        )
 
         options = get_question_generation_options(
             {
@@ -167,6 +174,8 @@ async def generate_interview_question(
         if not is_repeated_or_too_similar(result, user_history):
             user_history.append(result)
         _question_history_by_user[user_id] = user_history[-MAX_QUESTION_HISTORY:]
+
+        global_question_service.record_question(result)
 
         return {
             "question": result,

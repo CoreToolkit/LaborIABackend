@@ -55,6 +55,13 @@ class UserMetricsService:
             or 0
         )
 
+    def _get_dialect_name(self) -> str:
+        try:
+            from core.database import engine as _engine
+            return _engine.dialect.name.lower()
+        except Exception:
+            return "postgresql"
+
     def get_score_timeline(self, user_id: int, granularity: str = "week") -> list[dict]:
         """
         Retorna la evolución temporal del score del usuario agregada por semana o mes.
@@ -63,7 +70,7 @@ class UserMetricsService:
         if granularity not in {"week", "month"}:
             raise ValueError("granularity must be 'week' or 'month'")
 
-        dialect_name = (self.db.bind.dialect.name if self.db.bind else "").lower()
+        dialect_name = self._get_dialect_name()
 
         if dialect_name == "sqlite":
             period_expr = (
@@ -104,6 +111,33 @@ class UserMetricsService:
             }
             for period, avg_score, count in rows
         ]
+
+
+    def get_timeline_trend(self, user_id: int, granularity: str = "week") -> dict:
+        """
+        Retorna los puntos de timeline más un indicador de tendencia.
+        trend_direction: improving | declining | stable | insufficient_data
+        """
+        points = self.get_score_timeline(user_id=user_id, granularity=granularity)
+        if len(points) < 2:
+            return {"points": points, "trend_direction": "insufficient_data", "trend_percentage": None}
+
+        first_score = points[0]["avg_score"]
+        last_score = points[-1]["avg_score"]
+
+        if first_score == 0:
+            return {"points": points, "trend_direction": "stable", "trend_percentage": None}
+
+        trend_percentage = round((last_score - first_score) / first_score * 100, 2)
+
+        if trend_percentage > 5:
+            trend_direction = "improving"
+        elif trend_percentage < -5:
+            trend_direction = "declining"
+        else:
+            trend_direction = "stable"
+
+        return {"points": points, "trend_direction": trend_direction, "trend_percentage": trend_percentage}
 
     def calculate_average_score(self, user_id: int) -> float:
         """

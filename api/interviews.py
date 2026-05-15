@@ -1,10 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException
+import logging
+import time
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from core.database import get_db
 from core.jwt import get_current_user
 from services.report_service import ReportService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/interviews",
@@ -65,6 +70,7 @@ class ReportSummaryResponse(BaseModel):
 @router.get("/{session_id}/report", response_model=SessionReportResponse)
 def get_session_report(
     session_id: int,
+    unlock_badges: bool = Query(default=False),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
@@ -76,17 +82,31 @@ def get_session_report(
 
     Solo el dueño de la sesión puede ver su reporte.
     """
+    start = time.monotonic()
     user_id: int = current_user["id"]
-    report = ReportService(db).get_session_report(session_id=session_id, user_id=user_id)
+    report = ReportService(db).get_session_report(
+        session_id=session_id,
+        user_id=user_id,
+        unlock_badges=unlock_badges,
+    )
 
     if report is None:
         raise HTTPException(status_code=404, detail="Session not found or does not belong to you.")
 
+    logger.info(
+        "interviews.report duration_ms=%s user_id=%s session_id=%s unlock_badges=%s",
+        round((time.monotonic() - start) * 1000, 1),
+        user_id,
+        session_id,
+        unlock_badges,
+    )
     return SessionReportResponse(**report)
 
 
 @router.get("/reports", response_model=list[SessionReportResponse])
 def list_session_reports(
+    limit: int = Query(default=3, ge=1, le=20),
+    offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
@@ -94,9 +114,22 @@ def list_session_reports(
     Retorna el historial de reportes de entrevistas del usuario autenticado.
     Devuelve una lista ordenada del reporte más reciente al más antiguo.
     """
+    start = time.monotonic()
     user_id: int = current_user["id"]
-    reports = ReportService(db).list_session_reports(user_id=user_id)
+    reports = ReportService(db).list_session_reports(
+        user_id=user_id,
+        limit=limit,
+        offset=offset,
+    )
 
+    logger.info(
+        "interviews.reports duration_ms=%s user_id=%s limit=%s offset=%s count=%s",
+        round((time.monotonic() - start) * 1000, 1),
+        user_id,
+        limit,
+        offset,
+        len(reports),
+    )
     return [SessionReportResponse(**report) for report in reports]
 
 
@@ -109,7 +142,14 @@ def list_session_reports_summary(
     Retorna un resumen ligero del historial de reportes para uso en dashboards/tarjetas.
     Sin evaluaciones detalladas ni efectos secundarios.
     """
+    start = time.monotonic()
     user_id: int = current_user["id"]
     summaries = ReportService(db).list_session_reports_summary(user_id=user_id)
 
+    logger.info(
+        "interviews.reports_summary duration_ms=%s user_id=%s count=%s",
+        round((time.monotonic() - start) * 1000, 1),
+        user_id,
+        len(summaries),
+    )
     return [ReportSummaryResponse(**s) for s in summaries]

@@ -23,3 +23,5 @@ class User(Base):
     user_metrics = relationship("UserMetrics", back_populates="user", uselist=False, cascade="all, delete-orphan")
     recommendations = relationship("Recommendation", back_populates="user", cascade="all, delete-orphan")
     user_badges = relationship("UserBadge", back_populates="user", cascade="all, delete-orphan")
+    improvement_plan = relationship("ImprovementPlan", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    improvement_plan_history = relationship("ImprovementPlanHistory", back_populates="user", cascade="all, delete-orphan")

@@ -11,7 +11,9 @@ from ai.question_deduplication import (
 from core.database import get_db
 from core.jwt import get_current_user
 from exceptions.profile_exceptions import ProfileNotFoundError
+from services.global_question_service import GlobalQuestionService
 from services.profile_service import ProfileService
+from services.skill_selector import get_session_used_skills, select_target_skill
 from utils.prompts.question_generation import (
     build_question_generation_prompts,
     get_question_generation_options,
@@ -91,17 +93,22 @@ async def generate_interview_question(
 
     Body (all optional):
     {
+        "session_id": 42,
         "target_skill": "Python",
         "difficulty": "junior|mid|senior|adaptive",
         "previous_questions": ["..."],
         "temperature": 0.1,
         "max_tokens": 150
     }
+
+    When target_skill is omitted the backend infers the next skill to cover from
+    the user's profile, rotating through uncovered skills in the session.
     """
     try:
         body = body or {}
 
         profile_service = ProfileService(db)
+        global_question_service = GlobalQuestionService(db)
         user_id = current_user["id"]
 
         profile = profile_service.get_profile_by_user_id(user_id)
@@ -111,6 +118,16 @@ async def generate_interview_question(
         skills = profile_service.list_skills(user_id)
         experiences = profile_service.list_experiences(user_id)
 
+        target_skill: str | None = body.get("target_skill")
+        if not target_skill:
+            session_id: int | None = body.get("session_id")
+            used_skills: list[str] = (
+                get_session_used_skills(db, session_id, user_id)
+                if session_id
+                else []
+            )
+            target_skill = select_target_skill(list(skills), used_skills)
+
         raw_previous = body.get("previous_questions") or []
         body_previous_questions: list[str] = []
 
@@ -118,7 +135,12 @@ async def generate_interview_question(
             body_previous_questions = [str(item) for item in raw_previous if str(item).strip()]
 
         backend_history = _question_history_by_user.get(user_id, [])
-        previous_questions = merge_previous_questions(body_previous_questions, backend_history)
+        global_history = global_question_service.list_all_questions_texts()
+        previous_questions = merge_previous_questions(
+            body_previous_questions,
+            backend_history,
+            global_history,
+        )
 
         options = get_question_generation_options(
             {
@@ -138,7 +160,7 @@ async def generate_interview_question(
                 profile=profile,
                 skills=skills,
                 experiences=experiences,
-                target_skill=body.get("target_skill"),
+                target_skill=target_skill,
                 difficulty=body.get("difficulty"),
                 previous_questions=combined_previous,
             )
@@ -172,10 +194,12 @@ async def generate_interview_question(
             user_history.append(result)
         _question_history_by_user[user_id] = user_history[-MAX_QUESTION_HISTORY:]
 
+        global_question_service.record_question(result)
+
         return {
             "question": result,
             "meta": {
-                "target_skill": body.get("target_skill"),
+                "target_skill": target_skill,
                 "difficulty": body.get("difficulty", "adaptive"),
                 "skills_used": len(skills),
                 "experiences_used": len(experiences),

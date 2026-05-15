@@ -1,7 +1,10 @@
+from sqlalchemy import func as sqlfunc
 from sqlalchemy.orm import Session, joinedload
 
 from models.evaluation import Evaluation, EvaluationStatus
 from models.interview_session import InterviewSession
+from models.badge import UserBadge
+from models.question import Question
 from services.badge_service import BadgeService
 
 
@@ -9,19 +12,35 @@ class ReportService:
     def __init__(self, db: Session):
         self.db = db
 
-    def get_session_report(self, session_id: int, user_id: int) -> dict | None:
+    def get_session_report(
+        self,
+        session_id: int,
+        user_id: int,
+        unlock_badges: bool = False,
+    ) -> dict | None:
         session = self._get_session(session_id, user_id)
         if not session:
             return None
 
-        return self._build_session_report(session=session, user_id=user_id, unlock_badges=True)
+        return self._build_session_report(
+            session=session,
+            user_id=user_id,
+            unlock_badges=unlock_badges,
+        )
 
-    def list_session_reports(self, user_id: int) -> list[dict]:
+    def list_session_reports(
+        self,
+        user_id: int,
+        limit: int = 3,
+        offset: int = 0,
+    ) -> list[dict]:
         sessions = (
             self.db.query(InterviewSession)
             .options(joinedload(InterviewSession.questions))
             .filter(InterviewSession.user_id == user_id)
             .order_by(InterviewSession.created_at.desc(), InterviewSession.id.desc())
+            .offset(offset)
+            .limit(limit)
             .all()
         )
 
@@ -35,24 +54,87 @@ class ReportService:
         Retorna una versión ligera de los reportes del usuario, adecuada para listados
         y tarjetas en el frontend. No provoca side-effects.
         """
-        full_reports = self.list_session_reports(user_id=user_id)
+        question_counts = (
+            self.db.query(
+                Question.interview_session_id.label("session_id"),
+                sqlfunc.count(Question.id).label("total_questions"),
+            )
+            .group_by(Question.interview_session_id)
+            .subquery()
+        )
+        evaluation_scores = (
+            self.db.query(
+                Evaluation.interview_session_id.label("session_id"),
+                sqlfunc.count(Evaluation.id).label("completed_questions"),
+                sqlfunc.avg(Evaluation.score).label("session_score"),
+            )
+            .filter(
+                Evaluation.status == EvaluationStatus.COMPLETED,
+                Evaluation.score >= 0,
+            )
+            .group_by(Evaluation.interview_session_id)
+            .subquery()
+        )
+
+        rows = (
+            self.db.query(
+                InterviewSession.id.label("session_id"),
+                InterviewSession.created_at.label("session_created_at"),
+                sqlfunc.coalesce(question_counts.c.total_questions, 0).label("total_questions"),
+                sqlfunc.coalesce(evaluation_scores.c.completed_questions, 0).label("completed_questions"),
+                evaluation_scores.c.session_score.label("session_score"),
+            )
+            .outerjoin(question_counts, question_counts.c.session_id == InterviewSession.id)
+            .outerjoin(evaluation_scores, evaluation_scores.c.session_id == InterviewSession.id)
+            .filter(InterviewSession.user_id == user_id)
+            .order_by(InterviewSession.created_at.asc(), InterviewSession.id.asc())
+            .all()
+        )
+        badge_unlock_times = [
+            item[0]
+            for item in (
+                self.db.query(UserBadge.unlocked_at)
+                .filter(UserBadge.user_id == user_id)
+                .all()
+            )
+        ]
+
         summaries = []
-        for r in full_reports:
-            summaries.append(
-                {
-                    "session_id": r["session_id"],
-                    "session_score": r["session_score"],
-                    "session_created_at": r["session_created_at"],
-                    "total_questions": r["total_questions"],
-                    "completed_questions": r["completed_questions"],
-                    "trend": r["comparison"]["trend"],
-                    "improvement": r["comparison"]["improvement"],
-                    "previous_score": r["comparison"]["previous_score"],
-                    "badges_count": len(r.get("badges_unlocked", [])),
-                }
+        previous_score = None
+        for row in rows:
+            session_score = round(row.session_score, 2) if row.session_score is not None else None
+            improvement = None
+            trend = "first_session" if previous_score is None else "stable"
+            if previous_score is not None and session_score is not None:
+                improvement = round(session_score - previous_score, 2)
+                if improvement > 0:
+                    trend = "improved"
+                elif improvement < 0:
+                    trend = "declined"
+
+            badges_count = sum(
+                1
+                for unlocked_at in badge_unlock_times
+                if unlocked_at and unlocked_at >= row.session_created_at
             )
 
-        return summaries
+            summaries.append(
+                {
+                    "session_id": row.session_id,
+                    "session_score": session_score,
+                    "session_created_at": str(row.session_created_at),
+                    "total_questions": int(row.total_questions or 0),
+                    "completed_questions": int(row.completed_questions or 0),
+                    "trend": trend,
+                    "improvement": improvement,
+                    "previous_score": previous_score,
+                    "badges_count": int(badges_count),
+                }
+            )
+            if session_score is not None:
+                previous_score = session_score
+
+        return list(reversed(summaries))
 
     def _build_session_report(
         self,
@@ -119,45 +201,53 @@ class ReportService:
     def _get_comparison(
         self, user_id: int, session_id: int, session_score: float | None
     ) -> dict:
-        prev_sessions = (
-            self.db.query(InterviewSession)
+        from sqlalchemy import func as sqlfunc
+        
+        # Una sola query: obtener sesión previa más reciente con su score promedio.
+        # Evita N+1: en lugar de traer todas las sesiones (N queries), 
+        # traemos solo la más reciente con su score agregado (1 query).
+        prev_row = (
+            self.db.query(
+                InterviewSession.id,
+                sqlfunc.avg(Evaluation.score).label('prev_score')
+            )
+            .join(Evaluation, Evaluation.interview_session_id == InterviewSession.id)
             .filter(
                 InterviewSession.user_id == user_id,
                 InterviewSession.id != session_id,
+                Evaluation.status == EvaluationStatus.COMPLETED,
+                Evaluation.score >= 0,
             )
+            .group_by(InterviewSession.id)
             .order_by(InterviewSession.created_at.desc())
-            .all()
+            .first()
         )
 
-        for prev in prev_sessions:
-            prev_evals = self._get_session_evaluations(prev.id)
-            prev_score = self._calculate_session_score(prev_evals)
-            if prev_score is None:
-                continue
-
-            improvement = None
-            trend = "stable"
-            if session_score is not None:
-                improvement = round(session_score - prev_score, 2)
-                if improvement > 0:
-                    trend = "improved"
-                elif improvement < 0:
-                    trend = "declined"
-
+        if not prev_row or prev_row.prev_score is None:
             return {
-                "has_previous": True,
-                "previous_session_id": prev.id,
-                "previous_score": prev_score,
-                "improvement": improvement,
-                "trend": trend,
+                "has_previous": False,
+                "previous_session_id": None,
+                "previous_score": None,
+                "improvement": None,
+                "trend": "first_session",
             }
 
+        prev_score = round(prev_row.prev_score, 2)
+        improvement = None
+        trend = "stable"
+        if session_score is not None:
+            improvement = round(session_score - prev_score, 2)
+            if improvement > 0:
+                trend = "improved"
+            elif improvement < 0:
+                trend = "declined"
+
         return {
-            "has_previous": False,
-            "previous_session_id": None,
-            "previous_score": None,
-            "improvement": None,
-            "trend": "first_session",
+            "has_previous": True,
+            "previous_session_id": prev_row.id,
+            "previous_score": prev_score,
+            "improvement": improvement,
+            "trend": trend,
         }
 
     def _get_session_badges(self, user_id: int, session_created_at) -> list[dict]:

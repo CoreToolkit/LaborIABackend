@@ -62,12 +62,16 @@ async def generate_speech(
     current_user: dict = Depends(get_current_user),
 ) -> ElevenLabsSpeechResponse:
     if elevenlabs_init_error:
-        raise HTTPException(status_code=503, detail=_ERR_TTS_UNAVAILABLE)
+        return ElevenLabsSpeechResponse(
+            audio=None,
+            tts_status="fallback",
+            tts_error=_ERR_TTS_UNAVAILABLE,
+        )
 
     try:
         audio_bytes = await elevenlabs_client.generate_speech(body.text)
         audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
-        return ElevenLabsSpeechResponse(audio=audio_base64)
+        return ElevenLabsSpeechResponse(audio=audio_base64, tts_status="ok")
     except HTTPException:
         raise
     except ValueError:
@@ -76,4 +80,8 @@ async def generate_speech(
     except Exception as exc:
         # Loguear detalle interno pero NO exponer al cliente
         logger.warning("ElevenLabs speech generation failed: %s", exc)
-        raise HTTPException(status_code=503, detail=_ERR_TTS_UNAVAILABLE)
+        return ElevenLabsSpeechResponse(
+            audio=None,
+            tts_status="fallback",
+            tts_error=_ERR_TTS_UNAVAILABLE,
+        )

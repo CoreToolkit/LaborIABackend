@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+import random
 from typing import Any, Iterable
 
 
@@ -18,7 +19,7 @@ _GROUP_QUESTION_TYPES = [
 		"instruction": (
 			"Genera una pregunta TÉCNICA CONCEPTUAL que evalúe comprensión profunda: "
 			"diferencias entre tecnologías, cuándo usar X vs Y, o cómo funciona algo internamente. "
-			"Ejemplo de estructura: '¿Cuál es la diferencia entre X e Y y cuándo usarías cada uno?'"
+			"Ejemplo: '¿Cuál es la diferencia entre X e Y y cuándo usarías cada uno?'"
 		),
 	},
 	{
@@ -33,33 +34,77 @@ _GROUP_QUESTION_TYPES = [
 		"label": "escenario_crisis",
 		"instruction": (
 			"Genera una pregunta de ESCENARIO DE CRISIS o fallo en producción. "
-			"Plantea un problema concreto y real (error crítico, caída de servicio, bug grave) "
-			"y pregunta cómo respondería paso a paso. "
-			"Ejemplo: 'Tu aplicación en producción empieza a lanzar X. ¿Cuáles son tus primeros tres pasos?'"
+			"Plantea un problema concreto (incidente, degradación, bug grave) y pregunta por los pasos de respuesta."
 		),
 	},
 	{
 		"label": "trade_off",
 		"instruction": (
 			"Genera una pregunta de TRADE-OFF o decisión de diseño. "
-			"El candidato debe razonar entre dos opciones técnicas válidas con criterios concretos. "
-			"Ejemplo: '¿Cuándo elegirías X sobre Y para un nuevo proyecto y qué factores definirían tu decisión?'"
+			"El candidato debe razonar entre dos opciones válidas con criterios concretos."
 		),
 	},
 	{
 		"label": "aprendizaje_error",
 		"instruction": (
-			"Genera una pregunta sobre UN ERROR O FRACASO TÉCNICO y qué aprendió el candidato. "
-			"Debe invitar a reflexión honesta, no a una respuesta perfecta. "
-			"Ejemplo: 'Cuéntame de una decisión técnica que tomaste y que luego tuviste que cambiar o refactorizar. ¿Qué aprendiste?'"
+			"Genera una pregunta sobre un ERROR O FRACASO TÉCNICO y qué aprendió el candidato. "
+			"Debe invitar a reflexión honesta."
+		),
+	},
+	{
+		"label": "debugging",
+		"instruction": (
+			"Genera una pregunta sobre DEPURACIÓN. "
+			"Plantea un bug o síntoma y pide el enfoque para aislar la causa raíz."
+		),
+	},
+	{
+		"label": "observabilidad",
+		"instruction": (
+			"Genera una pregunta sobre OBSERVABILIDAD. "
+			"Debe mencionar métricas, logs o trazas y cómo las usaría para diagnosticar un problema."
+		),
+	},
+	{
+		"label": "rendimiento",
+		"instruction": (
+			"Genera una pregunta sobre PERFORMANCE. "
+			"Plantea un sistema lento o con cuellos de botella y pide cómo los identificaría y optimizaría."
+		),
+	},
+	{
+		"label": "testing",
+		"instruction": (
+			"Genera una pregunta sobre ESTRATEGIA DE PRUEBAS. "
+			"Pide cómo diseñaría pruebas para un caso concreto (unitarias, integración, end-to-end)."
+		),
+	},
+	{
+		"label": "seguridad",
+		"instruction": (
+			"Genera una pregunta sobre SEGURIDAD en aplicaciones. "
+			"Debe incluir un riesgo concreto (auth, inyección, secretos) y pedir mitigaciones."
+		),
+	},
+	{
+		"label": "sistemas_diseno",
+		"instruction": (
+			"Genera una pregunta de DISEÑO DE SISTEMAS. "
+			"Pide una propuesta de arquitectura a alto nivel con componentes y trade-offs."
+		),
+	},
+	{
+		"label": "refactorizacion",
+		"instruction": (
+			"Genera una pregunta sobre REFACTORIZACIÓN o deuda técnica. "
+			"Pide cómo priorizaría mejoras sin frenar la entrega."
 		),
 	},
 	{
 		"label": "basada_en_experiencia",
 		"instruction": (
 			"Genera una pregunta que ANCLE DIRECTAMENTE en el historial profesional del candidato. "
-			"Referencia su cargo más reciente, empresa o una skill específica declarada. "
-			"Ejemplo: 'En tu rol como [cargo] en [empresa], ¿cómo abordaste...?'"
+			"Referencia su cargo más reciente, empresa o una skill específica declarada."
 		),
 	},
 ]
@@ -133,8 +178,9 @@ def _format_previous_questions(previous_questions: Iterable[str] | None) -> str:
 
 
 def _pick_question_type(round_index: int) -> dict:
-	"""Rota entre los tipos de pregunta según el índice de ronda."""
-	return _GROUP_QUESTION_TYPES[round_index % len(_GROUP_QUESTION_TYPES)]
+	"""Selecciona un tipo de pregunta de forma aleatoria para variar la experiencia."""
+	_ = round_index
+	return random.choice(_GROUP_QUESTION_TYPES)
 
 
 def _build_experience_anchor(experiences: list) -> str:
@@ -200,11 +246,11 @@ def build_question_generation_prompts(
 	Build system and user prompts focused on generating one interview question.
 	"""
 	system_prompt = (
-		"You are an interviewer assistant focused on technical interviews. "
-		"Generate exactly one technical question in plain language. "
-		"Do not provide answers, hints, explanations, markdown, bullets, or numbering. "
-		"Use only provided profile context. Do not invent technologies, projects, companies, or experience. "
-		"If context is limited, ask a fundamental question tied to known skills."
+		"Eres un asistente entrevistador especializado en entrevistas técnicas. "
+		"Formula exactamente una pregunta técnica en español, en lenguaje claro y directo. "
+		"No proporciones respuestas, pistas, explicaciones, markdown, listas ni numeración. "
+		"Usa únicamente el contexto del perfil proporcionado. No inventes tecnologías, proyectos, empresas ni experiencias. "
+		"Si el contexto es limitado, formula una pregunta fundamental relacionada con las skills conocidas."
 	)
 	profile_summary = _build_candidate_context(profile, skills, experiences)
 

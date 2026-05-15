@@ -36,7 +36,7 @@ def test_build_question_generation_prompts_includes_profile_context():
         previous_questions=["What is a database index?"],
     )
 
-    assert "technical interviews" in system_prompt
+    assert "entrevistas técnicas" in system_prompt
     assert "Ada Lovelace" in user_prompt
     assert "Python" in user_prompt
     assert "What is a database index?" in user_prompt
