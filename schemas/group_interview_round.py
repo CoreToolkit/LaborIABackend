@@ -25,5 +25,7 @@ class GroupInterviewRoundNextResponseSchema(BaseModel):
     difficulty: str | None
     status: str
     created_at: datetime | None
-    selected_user_id: int | None = None
-    selected_user_name: str | None = None
+    assigned_user_id: int | None = Field(
+        None,
+        description="ID del participante seleccionado para responder esta ronda. None en la intro.",
+    )

@@ -21,8 +21,8 @@ class GroupInterviewRoundService:
         target_skill: str | None = None,
         difficulty: str | None = None,
         created_by: int | None = None,
-        selected_user_id: int | None = None,
         metadata_json: dict | None = None,
+        assigned_user_id: int | None = None,
     ) -> GroupInterviewRound:
         session = self.group_session_repo.get_by_id(group_session_id)
         if not session:
@@ -43,8 +43,8 @@ class GroupInterviewRoundService:
             difficulty=difficulty,
             status=GroupInterviewRoundStatus.ACTIVE,
             created_by=created_by,
-            selected_user_id=selected_user_id,
             metadata_json=metadata_json,
+            assigned_user_id=assigned_user_id,
         )
 
     def close_active_round(self, group_session_id: int) -> GroupInterviewRound | None:

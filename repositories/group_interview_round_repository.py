@@ -18,8 +18,8 @@ class GroupInterviewRoundRepository:
         difficulty: str | None = None,
         status: GroupInterviewRoundStatus = GroupInterviewRoundStatus.ACTIVE,
         created_by: int | None = None,
-        selected_user_id: int | None = None,
         metadata_json: dict | None = None,
+        assigned_user_id: int | None = None,
     ) -> GroupInterviewRound:
         round_item = GroupInterviewRound(
             group_interview_session_id=group_interview_session_id,
@@ -29,8 +29,8 @@ class GroupInterviewRoundRepository:
             difficulty=difficulty,
             status=status,
             created_by=created_by,
-            selected_user_id=selected_user_id,
             metadata_json=metadata_json,
+            assigned_user_id=assigned_user_id,
         )
         self.db.add(round_item)
         self.db.commit()
@@ -81,3 +81,22 @@ class GroupInterviewRoundRepository:
         self.db.commit()
         self.db.refresh(round_item)
         return round_item
+
+    def get_assigned_user_ids_in_session(
+        self, group_interview_session_id: int
+    ) -> list[int]:
+        """
+        Retorna la lista ordenada de assigned_user_id de todas las rondas no-intro
+        de la sesión (en orden de round_index ascendente).
+        Se usa para calcular el turno siguiente en la rotación round-robin.
+        """
+        rows = (
+            self.db.query(GroupInterviewRound.assigned_user_id)
+            .filter(
+                GroupInterviewRound.group_interview_session_id == group_interview_session_id,
+                GroupInterviewRound.assigned_user_id.isnot(None),
+            )
+            .order_by(GroupInterviewRound.round_index.asc())
+            .all()
+        )
+        return [row[0] for row in rows if row[0] is not None]
