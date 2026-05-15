@@ -1,10 +1,9 @@
-import os
-
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from starlette.concurrency import run_in_threadpool
 
 from ai.azure_speech_client import AzureSpeechClient
 from ai.azure_speech_service import AzureSpeechService
+from core.config import settings
 from core.jwt import get_current_user
 
 
@@ -13,7 +12,7 @@ router = APIRouter(
     tags=["azure-speech"],
 )
 
-MAX_AUDIO_UPLOAD_BYTES = int(os.getenv("MAX_AUDIO_UPLOAD_BYTES", str(10 * 1024 * 1024)))
+MAX_AUDIO_UPLOAD_BYTES = settings.MAX_AUDIO_UPLOAD_BYTES
 _READ_CHUNK_SIZE = 1024 * 1024
 
 

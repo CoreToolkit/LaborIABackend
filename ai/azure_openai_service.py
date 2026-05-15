@@ -1,18 +1,15 @@
 import asyncio
 import logging
-import os
 import threading
 import time
-from dotenv import load_dotenv
+
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncAzureOpenAI
 
-load_dotenv()
+from core.config import settings
 
 logger = logging.getLogger(__name__)
 
-_AZURE_OPENAI_MAX_CONCURRENT = int(os.getenv("AZURE_OPENAI_MAX_CONCURRENT", "5"))
-_AZURE_OPENAI_ACQUIRE_TIMEOUT = int(os.getenv("AZURE_OPENAI_ACQUIRE_TIMEOUT", "10"))
-_azure_openai_semaphore = threading.BoundedSemaphore(_AZURE_OPENAI_MAX_CONCURRENT)
+_azure_openai_semaphore = threading.BoundedSemaphore(settings.AZURE_OPENAI_MAX_CONCURRENT)
 
 
 class AzureOpenAIService:
@@ -24,11 +21,11 @@ class AzureOpenAIService:
         deployment_name: str = None,
         timeout: int = None,
     ):
-        self.endpoint = endpoint or os.getenv("AZURE_OPENAI_ENDPOINT")
-        self.api_key = api_key or os.getenv("AZURE_OPENAI_API_KEY")
-        self.api_version = api_version or os.getenv("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
-        self.deployment_name = deployment_name or os.getenv("AZURE_OPENAI_DEPLOYMENT")
-        self.timeout = timeout if timeout is not None else int(os.getenv("AZURE_OPENAI_TIMEOUT", "60"))
+        self.endpoint = endpoint or settings.AZURE_OPENAI_ENDPOINT
+        self.api_key = api_key or settings.AZURE_OPENAI_API_KEY
+        self.api_version = api_version or settings.AZURE_OPENAI_API_VERSION
+        self.deployment_name = deployment_name or settings.AZURE_OPENAI_DEPLOYMENT
+        self.timeout = timeout if timeout is not None else settings.AZURE_OPENAI_TIMEOUT
 
         missing = []
         if not self.endpoint:
@@ -87,7 +84,7 @@ class AzureOpenAIService:
         acquired = await asyncio.to_thread(
             _azure_openai_semaphore.acquire,
             True,
-            _AZURE_OPENAI_ACQUIRE_TIMEOUT,
+            settings.AZURE_OPENAI_ACQUIRE_TIMEOUT,
         )
         if not acquired:
             raise Exception("Azure OpenAI esta saturado temporalmente")

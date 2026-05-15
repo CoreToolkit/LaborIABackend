@@ -1,6 +1,4 @@
-import os
-from dotenv import load_dotenv
-load_dotenv()
+from core.config import settings
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
@@ -41,7 +39,7 @@ from middleware.auth_middleware import AuthMiddleware
 from core.limiter import auth_rate_limiter, rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-if os.getenv("AUTO_CREATE_TABLES", "false").lower() == "true":
+if settings.AUTO_CREATE_TABLES:
     try:
         Base.metadata.create_all(bind=engine)
     except Exception as e:
@@ -52,12 +50,9 @@ app = FastAPI()
 app.state.limiter = auth_rate_limiter
 app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
-local_host_front = os.getenv("LOCAL_HOST_FRONT")
-local_ip = os.getenv("LOCAL_IP")
-front_ip = os.getenv("FRONTEND_URL")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[local_host_front, local_ip, front_ip],
+    allow_origins=[settings.LOCAL_HOST_FRONT, settings.LOCAL_IP, settings.FRONTEND_URL],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -65,7 +60,7 @@ app.add_middleware(
 
 app.add_middleware(
     SessionMiddleware,
-    secret_key=os.getenv("secret_key", "dev-secret-key"),
+    secret_key=settings.secret_key,
 )
 
 # Middleware de autenticación JWT (excluye rutas públicas)
@@ -134,5 +129,3 @@ def ready_check():
 @app.get("/health", tags=["health"])
 def health_check():
     return live_check()
-
-

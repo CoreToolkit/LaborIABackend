@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from main import app
 import api.auth as auth_module
 from core import jwt as core_jwt
+from core.config import settings as app_settings
 
 client = TestClient(app)
 
@@ -22,9 +23,9 @@ def _make_id_token(payload: dict) -> str:
 
 
 def test_microsoft_auth(monkeypatch):
-    monkeypatch.setenv("MICROSOFT_CLIENT_ID", "test-client-id")
-    monkeypatch.setenv("MICROSOFT_REDIRECT_URI", "http://localhost:3000/auth/callback")
-    monkeypatch.setenv("MICROSOFT_TENANT_ID", "organizations")
+    monkeypatch.setattr(app_settings, "MICROSOFT_CLIENT_ID", "test-client-id")
+    monkeypatch.setattr(app_settings, "MICROSOFT_REDIRECT_URI", "http://localhost:3000/auth/callback")
+    monkeypatch.setattr(app_settings, "MICROSOFT_TENANT_ID", "organizations")
 
     response = client.get("/auth/microsoft")
 
@@ -42,8 +43,8 @@ def test_microsoft_auth(monkeypatch):
 
 
 def test_microsoft_auth_missing_required_env(monkeypatch):
-    monkeypatch.delenv("MICROSOFT_CLIENT_ID", raising=False)
-    monkeypatch.delenv("MICROSOFT_REDIRECT_URI", raising=False)
+    monkeypatch.setattr(app_settings, "MICROSOFT_CLIENT_ID", None)
+    monkeypatch.setattr(app_settings, "MICROSOFT_REDIRECT_URI", None)
 
     response = client.get("/auth/microsoft")
 
@@ -52,9 +53,9 @@ def test_microsoft_auth_missing_required_env(monkeypatch):
 
 
 def test_microsoft_auth_defaults_common_tenant(monkeypatch):
-    monkeypatch.setenv("MICROSOFT_CLIENT_ID", "test-client-id")
-    monkeypatch.setenv("MICROSOFT_REDIRECT_URI", "http://localhost:3000/auth/callback")
-    monkeypatch.delenv("MICROSOFT_TENANT_ID", raising=False)
+    monkeypatch.setattr(app_settings, "MICROSOFT_CLIENT_ID", "test-client-id")
+    monkeypatch.setattr(app_settings, "MICROSOFT_REDIRECT_URI", "http://localhost:3000/auth/callback")
+    monkeypatch.setattr(app_settings, "MICROSOFT_TENANT_ID", "common")
 
     response = client.get("/auth/microsoft")
 
@@ -82,11 +83,10 @@ def test_microsoft_exchange_success(monkeypatch):
             return DummyUser()
 
     monkeypatch.setattr(auth_module, "UserService", DummyService)
-    monkeypatch.setenv("MICROSOFT_CLIENT_ID", "test-client-id")
-    monkeypatch.setenv("MICROSOFT_CLIENT_SECRET", "test-secret")
-    monkeypatch.setenv("MICROSOFT_REDIRECT_URI", "http://localhost:3000/auth/callback")
-    monkeypatch.setenv("MICROSOFT_TENANT_ID", "organizations")
-    monkeypatch.setenv("JWT_SECRET", "secret")
+    monkeypatch.setattr(app_settings, "MICROSOFT_CLIENT_ID", "test-client-id")
+    monkeypatch.setattr(app_settings, "MICROSOFT_CLIENT_SECRET", "test-secret")
+    monkeypatch.setattr(app_settings, "MICROSOFT_REDIRECT_URI", "http://localhost:3000/auth/callback")
+    monkeypatch.setattr(app_settings, "MICROSOFT_TENANT_ID", "organizations")
 
     id_token = _make_id_token({"email": "user@example.com", "name": "Example User"})
 
@@ -114,7 +114,7 @@ class DummyResponse:
 
 
 def test_microsoft_exchange_missing_code(monkeypatch):
-    monkeypatch.setenv("MICROSOFT_REDIRECT_URI", "http://localhost:3000/auth/callback")
+    monkeypatch.setattr(app_settings, "MICROSOFT_REDIRECT_URI", "http://localhost:3000/auth/callback")
     response = client.post("/auth/microsoft/exchange", json={})
     assert response.status_code == 400
     assert "authorization code" in response.json()["detail"].lower()

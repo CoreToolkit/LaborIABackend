@@ -1,5 +1,4 @@
 
-import os
 import datetime as dt
 import time
 from urllib.parse import urlencode
@@ -8,6 +7,7 @@ from fastapi import APIRouter, Request, Body, Depends, HTTPException, Query, Sec
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
+from core.config import settings
 from core.oauth import oauth
 from core.jwt import (
     create_token,
@@ -32,10 +32,10 @@ async def _process_microsoft_code(code: str | None, state: str | None, db: Sessi
     if not code:
         raise HTTPException(status_code=400, detail="Missing authorization code from Microsoft.")
 
-    client_id = os.getenv("MICROSOFT_CLIENT_ID")
-    client_secret = os.getenv("MICROSOFT_CLIENT_SECRET")
-    redirect_uri = os.getenv("MICROSOFT_REDIRECT_URI")
-    tenant_id = os.getenv("MICROSOFT_TENANT_ID", "common")
+    client_id = settings.MICROSOFT_CLIENT_ID
+    client_secret = settings.MICROSOFT_CLIENT_SECRET
+    redirect_uri = settings.MICROSOFT_REDIRECT_URI
+    tenant_id = settings.MICROSOFT_TENANT_ID
 
     if not client_id or not client_secret or not redirect_uri:
         raise HTTPException(
@@ -96,7 +96,7 @@ router = APIRouter(
 
 @router.get("/google")
 async def login_google(request: Request):
-    redirect_uri = os.getenv("GOOGLE_REDIRECT_URI")
+    redirect_uri = settings.GOOGLE_REDIRECT_URI
     authorization_url = await oauth.google.create_authorization_url(redirect_uri=redirect_uri)
     return {
         "url": authorization_url["url"],
@@ -112,7 +112,7 @@ async def google_exchange(request: Request, db: Session = Depends(get_db)):
         code = data.get("code")
         state = data.get("state")
 
-        redirect_uri = os.getenv("GOOGLE_REDIRECT_URI")
+        redirect_uri = settings.GOOGLE_REDIRECT_URI
         token = await oauth.google.fetch_access_token(
             code=code,
             redirect_uri=redirect_uri
@@ -154,7 +154,7 @@ async def google_callback(request: Request, db: Session = Depends(get_db)):
     try:
         state = request.query_params.get("state")
         if state:
-            redirect_uri = os.getenv("GOOGLE_REDIRECT_URI")
+            redirect_uri = settings.GOOGLE_REDIRECT_URI
             request.session[f"_state_google_{state}"] = {
                 "data": {"redirect_uri": redirect_uri},
                 "exp": time.time() + 300
@@ -272,9 +272,9 @@ async def refresh_token(
     ),
 )
 def microsoft_login():
-    client_id = os.getenv("MICROSOFT_CLIENT_ID")
-    redirect_uri = os.getenv("MICROSOFT_REDIRECT_URI")
-    tenant_id = os.getenv("MICROSOFT_TENANT_ID", "common")
+    client_id = settings.MICROSOFT_CLIENT_ID
+    redirect_uri = settings.MICROSOFT_REDIRECT_URI
+    tenant_id = settings.MICROSOFT_TENANT_ID
 
     if not client_id or not redirect_uri:
         raise HTTPException(

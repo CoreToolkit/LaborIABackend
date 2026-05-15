@@ -7,6 +7,7 @@ from datetime import datetime, timezone, timedelta
 
 import jwt as pyjwt
 import pytest
+from core.config import settings as app_settings
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -34,15 +35,15 @@ def _make_app():
 
 
 def _valid_token(monkeypatch, *, issuer=None, audience=None) -> str:
-    monkeypatch.setenv("JWT_SECRET", "integration-secret")
+    monkeypatch.setattr(app_settings, "JWT_SECRET", "integration-secret")
     if issuer:
-        monkeypatch.setenv("JWT_ISSUER", issuer)
+        monkeypatch.setattr(app_settings, "JWT_ISSUER", issuer)
     else:
-        monkeypatch.delenv("JWT_ISSUER", raising=False)
+        monkeypatch.setattr(app_settings, "JWT_ISSUER", None)
     if audience:
-        monkeypatch.setenv("JWT_AUDIENCE", audience)
+        monkeypatch.setattr(app_settings, "JWT_AUDIENCE", audience)
     else:
-        monkeypatch.delenv("JWT_AUDIENCE", raising=False)
+        monkeypatch.setattr(app_settings, "JWT_AUDIENCE", None)
     return core_jwt.create_token({"email": "user@example.com", "id": 1, "name": "Test"})
 
 
@@ -57,9 +58,9 @@ def _now_plus(hours: int = 1):
 # ── token válido → 200 (o 404/422 si no hay datos, pero no 401) ──────────────
 
 def test_valid_token_passes_auth(monkeypatch):
-    monkeypatch.setenv("JWT_SECRET", "integration-secret")
-    monkeypatch.delenv("JWT_ISSUER", raising=False)
-    monkeypatch.delenv("JWT_AUDIENCE", raising=False)
+    monkeypatch.setattr(app_settings, "JWT_SECRET", "integration-secret")
+    monkeypatch.setattr(app_settings, "JWT_ISSUER", None)
+    monkeypatch.setattr(app_settings, "JWT_AUDIENCE", None)
 
     token = _valid_token(monkeypatch)
     client = TestClient(_make_app())
@@ -69,9 +70,9 @@ def test_valid_token_passes_auth(monkeypatch):
 
 
 def test_valid_token_with_iss_and_aud_passes(monkeypatch):
-    monkeypatch.setenv("JWT_SECRET", "integration-secret")
-    monkeypatch.setenv("JWT_ISSUER", "laboria-backend")
-    monkeypatch.setenv("JWT_AUDIENCE", "laboria-frontend")
+    monkeypatch.setattr(app_settings, "JWT_SECRET", "integration-secret")
+    monkeypatch.setattr(app_settings, "JWT_ISSUER", "laboria-backend")
+    monkeypatch.setattr(app_settings, "JWT_AUDIENCE", "laboria-frontend")
 
     token = _valid_token(monkeypatch, issuer="laboria-backend", audience="laboria-frontend")
     client = TestClient(_make_app())
@@ -83,9 +84,9 @@ def test_valid_token_with_iss_and_aud_passes(monkeypatch):
 # ── token sin claims obligatorios → 401 ──────────────────────────────────────
 
 def test_token_without_sub_returns_401(monkeypatch):
-    monkeypatch.setenv("JWT_SECRET", "integration-secret")
-    monkeypatch.delenv("JWT_ISSUER", raising=False)
-    monkeypatch.delenv("JWT_AUDIENCE", raising=False)
+    monkeypatch.setattr(app_settings, "JWT_SECRET", "integration-secret")
+    monkeypatch.setattr(app_settings, "JWT_ISSUER", None)
+    monkeypatch.setattr(app_settings, "JWT_AUDIENCE", None)
 
     now = datetime.now(timezone.utc)
     token = _raw_token({"email": "x@x.com", "exp": _now_plus(), "iat": now})
@@ -96,9 +97,9 @@ def test_token_without_sub_returns_401(monkeypatch):
 
 
 def test_token_without_exp_returns_401(monkeypatch):
-    monkeypatch.setenv("JWT_SECRET", "integration-secret")
-    monkeypatch.delenv("JWT_ISSUER", raising=False)
-    monkeypatch.delenv("JWT_AUDIENCE", raising=False)
+    monkeypatch.setattr(app_settings, "JWT_SECRET", "integration-secret")
+    monkeypatch.setattr(app_settings, "JWT_ISSUER", None)
+    monkeypatch.setattr(app_settings, "JWT_AUDIENCE", None)
 
     now = datetime.now(timezone.utc)
     token = _raw_token({"sub": "user@x.com", "iat": now})
@@ -109,9 +110,9 @@ def test_token_without_exp_returns_401(monkeypatch):
 
 
 def test_token_without_iat_returns_401(monkeypatch):
-    monkeypatch.setenv("JWT_SECRET", "integration-secret")
-    monkeypatch.delenv("JWT_ISSUER", raising=False)
-    monkeypatch.delenv("JWT_AUDIENCE", raising=False)
+    monkeypatch.setattr(app_settings, "JWT_SECRET", "integration-secret")
+    monkeypatch.setattr(app_settings, "JWT_ISSUER", None)
+    monkeypatch.setattr(app_settings, "JWT_AUDIENCE", None)
 
     token = _raw_token({"sub": "user@x.com", "exp": _now_plus()})
     client = TestClient(_make_app())
@@ -123,9 +124,9 @@ def test_token_without_iat_returns_401(monkeypatch):
 # ── token con claims incorrectos → 401 ───────────────────────────────────────
 
 def test_token_with_wrong_iss_returns_401(monkeypatch):
-    monkeypatch.setenv("JWT_SECRET", "integration-secret")
-    monkeypatch.setenv("JWT_ISSUER", "laboria-backend")
-    monkeypatch.delenv("JWT_AUDIENCE", raising=False)
+    monkeypatch.setattr(app_settings, "JWT_SECRET", "integration-secret")
+    monkeypatch.setattr(app_settings, "JWT_ISSUER", "laboria-backend")
+    monkeypatch.setattr(app_settings, "JWT_AUDIENCE", None)
 
     now = datetime.now(timezone.utc)
     token = _raw_token({
@@ -139,9 +140,9 @@ def test_token_with_wrong_iss_returns_401(monkeypatch):
 
 
 def test_token_with_wrong_aud_returns_401(monkeypatch):
-    monkeypatch.setenv("JWT_SECRET", "integration-secret")
-    monkeypatch.delenv("JWT_ISSUER", raising=False)
-    monkeypatch.setenv("JWT_AUDIENCE", "laboria-frontend")
+    monkeypatch.setattr(app_settings, "JWT_SECRET", "integration-secret")
+    monkeypatch.setattr(app_settings, "JWT_ISSUER", None)
+    monkeypatch.setattr(app_settings, "JWT_AUDIENCE", "laboria-frontend")
 
     now = datetime.now(timezone.utc)
     token = _raw_token({
@@ -155,9 +156,9 @@ def test_token_with_wrong_aud_returns_401(monkeypatch):
 
 
 def test_token_with_invalid_signature_returns_401(monkeypatch):
-    monkeypatch.setenv("JWT_SECRET", "integration-secret")
-    monkeypatch.delenv("JWT_ISSUER", raising=False)
-    monkeypatch.delenv("JWT_AUDIENCE", raising=False)
+    monkeypatch.setattr(app_settings, "JWT_SECRET", "integration-secret")
+    monkeypatch.setattr(app_settings, "JWT_ISSUER", None)
+    monkeypatch.setattr(app_settings, "JWT_AUDIENCE", None)
 
     now = datetime.now(timezone.utc)
     token = _raw_token(
@@ -171,9 +172,9 @@ def test_token_with_invalid_signature_returns_401(monkeypatch):
 
 
 def test_no_token_returns_401(monkeypatch):
-    monkeypatch.setenv("JWT_SECRET", "integration-secret")
-    monkeypatch.delenv("JWT_ISSUER", raising=False)
-    monkeypatch.delenv("JWT_AUDIENCE", raising=False)
+    monkeypatch.setattr(app_settings, "JWT_SECRET", "integration-secret")
+    monkeypatch.setattr(app_settings, "JWT_ISSUER", None)
+    monkeypatch.setattr(app_settings, "JWT_AUDIENCE", None)
 
     client = TestClient(_make_app())
     response = client.get("/api/roles")

@@ -3,6 +3,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from core.config import settings as app_settings
 
 pytest.importorskip("sqlalchemy")
 
@@ -157,7 +158,7 @@ def test_get_role_detail_raises_not_found_for_unknown_id():
 
 
 def test_create_role_creates_role_with_requirements_for_admin(monkeypatch):
-    monkeypatch.setenv("ADMIN_EMAILS", "admin@example.com")
+    monkeypatch.setattr(app_settings, "ADMIN_EMAILS", "admin@example.com")
     technology = _create_technology("FastAPI")
 
     db = TestSessionLocal()
@@ -191,7 +192,7 @@ def test_create_role_creates_role_with_requirements_for_admin(monkeypatch):
 
 
 def test_create_role_raises_for_non_admin(monkeypatch):
-    monkeypatch.setenv("ADMIN_EMAILS", "admin@example.com")
+    monkeypatch.setattr(app_settings, "ADMIN_EMAILS", "admin@example.com")
 
     db = TestSessionLocal()
     try:
@@ -214,7 +215,7 @@ def test_create_role_raises_for_non_admin(monkeypatch):
 
 
 def test_create_role_raises_when_technology_does_not_exist(monkeypatch):
-    monkeypatch.setenv("ADMIN_EMAILS", "admin@example.com")
+    monkeypatch.setattr(app_settings, "ADMIN_EMAILS", "admin@example.com")
 
     db = TestSessionLocal()
     try:

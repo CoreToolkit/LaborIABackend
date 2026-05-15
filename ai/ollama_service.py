@@ -1,8 +1,6 @@
-import os
 import httpx
-from dotenv import load_dotenv
 
-load_dotenv()
+from core.config import settings
 
 
 class OllamaService:
@@ -17,9 +15,9 @@ class OllamaService:
         model_name: str = None,
         timeout: int = None,
     ):
-        self.base_url = base_url or os.getenv("OLLAMA_BASE_URL")
-        self.model_name = model_name or os.getenv("OLLAMA_MODEL")
-        self.timeout = timeout if timeout is not None else int(os.getenv("OLLAMA_TIMEOUT", "120"))
+        self.base_url = base_url or settings.OLLAMA_BASE_URL
+        self.model_name = model_name or settings.OLLAMA_MODEL
+        self.timeout = timeout if timeout is not None else settings.OLLAMA_TIMEOUT
         self.chat_endpoint = f"{self.base_url}/api/chat"
         self.generate_endpoint = f"{self.base_url}/api/generate"
 
@@ -28,12 +26,12 @@ class OllamaService:
         Retorna opciones optimizadas para evitar pensamiento excesivo y repeticiones.
         """
         return {
-            "temperature": 0.1,          
-            "num_predict": 512,          # Limita tokens de salida
-            "repeat_penalty": 1.1,       # Penaliza repeticiones
-            "top_p": 0.3,                # Top-p bajo = respuestas más enfocadas
-            "top_k": 10,                 # Top-k bajo = menos divagación
-            "num_ctx": 2048,             # Tamaño del contexto
+            "temperature": 0.1,
+            "num_predict": 512,
+            "repeat_penalty": 1.1,
+            "top_p": 0.3,
+            "top_k": 10,
+            "num_ctx": 2048,
         }
 
     async def health_check(self) -> bool:
@@ -55,19 +53,6 @@ class OllamaService:
         stream: bool = False,
         think: bool = False,
     ) -> str:
-        """
-        Envía un mensaje al modelo y retorna la respuesta.
-
-        Args:
-            user_prompt: El mensaje del usuario
-            system_prompt: Instrucciones del sistema
-            temperature: Override de temperatura 
-            num_predict: Override de tokens máximos 
-            stream: Si True, retorna respuesta en streaming (no implementado aún)
-
-        Returns:
-            str: Contenido de la respuesta del modelo
-        """
         options = self._get_default_options()
 
         if temperature is not None:

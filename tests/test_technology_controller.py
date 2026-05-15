@@ -4,6 +4,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from core.config import settings as app_settings
 
 pytest.importorskip("fastapi")
 pytest.importorskip("sqlalchemy")
@@ -147,7 +148,7 @@ def test_get_technology_detail_returns_404_when_not_found():
 
 
 def test_create_technology_returns_201_for_admin(monkeypatch):
-    monkeypatch.setenv("ADMIN_EMAILS", "admin@example.com")
+    monkeypatch.setattr(app_settings, "ADMIN_EMAILS", "admin@example.com")
     headers = _auth_headers("admin@example.com")
 
     response = client.post("/api/technologies", json={"name": "FastAPI"}, headers=headers)
@@ -157,7 +158,7 @@ def test_create_technology_returns_201_for_admin(monkeypatch):
 
 
 def test_update_technology_returns_200_for_admin(monkeypatch):
-    monkeypatch.setenv("ADMIN_EMAILS", "admin@example.com")
+    monkeypatch.setattr(app_settings, "ADMIN_EMAILS", "admin@example.com")
     technology = _create_technology("FastAPI")
     headers = _auth_headers("admin@example.com")
 
@@ -168,7 +169,7 @@ def test_update_technology_returns_200_for_admin(monkeypatch):
 
 
 def test_update_technology_returns_404_when_not_found(monkeypatch):
-    monkeypatch.setenv("ADMIN_EMAILS", "admin@example.com")
+    monkeypatch.setattr(app_settings, "ADMIN_EMAILS", "admin@example.com")
     headers = _auth_headers("admin@example.com")
 
     response = client.put("/api/technologies/999", json={"name": "FastAPI v2"}, headers=headers)
@@ -178,7 +179,7 @@ def test_update_technology_returns_404_when_not_found(monkeypatch):
 
 
 def test_delete_technology_returns_204_for_admin(monkeypatch):
-    monkeypatch.setenv("ADMIN_EMAILS", "admin@example.com")
+    monkeypatch.setattr(app_settings, "ADMIN_EMAILS", "admin@example.com")
     technology = _create_technology("FastAPI")
     headers = _auth_headers("admin@example.com")
 
@@ -188,7 +189,7 @@ def test_delete_technology_returns_204_for_admin(monkeypatch):
 
 
 def test_delete_technology_returns_409_when_in_use(monkeypatch):
-    monkeypatch.setenv("ADMIN_EMAILS", "admin@example.com")
+    monkeypatch.setattr(app_settings, "ADMIN_EMAILS", "admin@example.com")
     technology = _create_technology("FastAPI")
     role = _create_role()
     _create_role_skill(role.id, technology.id)
@@ -201,7 +202,7 @@ def test_delete_technology_returns_409_when_in_use(monkeypatch):
 
 
 def test_write_operations_require_admin(monkeypatch):
-    monkeypatch.setenv("ADMIN_EMAILS", "admin@example.com")
+    monkeypatch.setattr(app_settings, "ADMIN_EMAILS", "admin@example.com")
     headers = _auth_headers("user@example.com")
 
     response = client.post("/api/technologies", json={"name": "FastAPI"}, headers=headers)

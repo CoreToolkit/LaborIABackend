@@ -1,6 +1,5 @@
 import json
 import logging
-import os
 from datetime import datetime, timezone
 from uuid import UUID as PyUUID
 
@@ -26,6 +25,7 @@ from schemas.group_interview_round import (
     GroupInterviewNextRoundRequestSchema,
     GroupInterviewRoundNextResponseSchema,
 )
+from core.config import settings
 from services.answer_evaluator import run_evaluation_background
 from services.group_interview_orchestrator_service import GroupInterviewOrchestratorService
 from services.group_interview_session_service import GroupInterviewSessionService
@@ -38,7 +38,7 @@ router = APIRouter(
 )
 
 logger = logging.getLogger(__name__)
-MAX_AUDIO_UPLOAD_BYTES = int(os.getenv("MAX_AUDIO_UPLOAD_BYTES", str(10 * 1024 * 1024)))
+MAX_AUDIO_UPLOAD_BYTES = settings.MAX_AUDIO_UPLOAD_BYTES
 _READ_CHUNK_SIZE = 1024 * 1024
 
 
