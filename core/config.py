@@ -60,6 +60,9 @@ class Settings(BaseSettings):
     OLLAMA_MODEL: Optional[str] = None
     OLLAMA_TIMEOUT: int = 120
 
+    # LLM provider selection ("azure" | "ollama"); defaults to "azure"
+    LLM_PROVIDER: str = "azure"
+
     # App / CORS
     MAX_AUDIO_UPLOAD_BYTES: int = 10 * 1024 * 1024
     WEBSOCKET_AUTH_REQUIRED: bool = False

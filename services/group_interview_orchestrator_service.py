@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
-from ai.azure_openai_client import AzureOpenAIClient
+from ai.provider import LLMProvider
 from ai.question_deduplication import (
     MAX_GENERATION_ATTEMPTS,
     is_repeated_or_too_similar,
@@ -74,13 +74,21 @@ class RoundEventPayloads:
 
 
 class GroupInterviewOrchestratorService:
-    def __init__(self, db):
+    def __init__(self, db, llm_provider: LLMProvider | None = None):
         self.db = db
         self.profile_service = ProfileService(db)
         self.group_session_service = GroupInterviewSessionService(db)
         self.round_service = GroupInterviewRoundService(db)
         self.global_question_service = GlobalQuestionService(db)
-        self.azure_client = AzureOpenAIClient()
+        if llm_provider is not None:
+            self._llm_provider: LLMProvider | None = llm_provider
+        else:
+            try:
+                from ai.provider_factory import create_llm_provider
+                self._llm_provider = create_llm_provider()
+            except Exception as exc:
+                logger.warning("LLM provider not available: %s", exc)
+                self._llm_provider = None
 
         # ElevenLabs es opcional: si no está configurado, el flujo continúa sin TTS
         self._elevenlabs_client = None
@@ -189,7 +197,7 @@ class GroupInterviewOrchestratorService:
                 )
 
             try:
-                generated_question = await self.azure_client.ask(
+                generated_question = await self._llm_provider.ask(
                     question=prompt,
                     system_prompt=system_prompt,
                     temperature=0.8,

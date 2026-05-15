@@ -39,8 +39,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
 
-from ai.azure_openai_client import AzureOpenAIClient
-from ai.azure_openai_service import AzureOpenAIService
+from ai.provider import LLMProvider
 from core.database import SessionLocal
 from models.evaluation import Evaluation, EvaluationStatus
 from models.interview_session import InterviewSession
@@ -56,9 +55,8 @@ from services.interview_flow import (
 
 logger = logging.getLogger(__name__)
 
-# ── Cliente Azure (lazy init para no romper tests sin variables de entorno) ───
-_azure_service: AzureOpenAIService | None = None
-_azure_client: AzureOpenAIClient | None = None
+# ── Proveedor LLM (lazy init para no romper tests sin variables de entorno) ───
+_azure_client: LLMProvider | None = None
 
 EVAL_VERSION = "1.0"
 
@@ -237,7 +235,7 @@ def run_evaluation_background(
         update_data: dict[str, Any] = {
             "duration_ms":  duration_ms,
             "eval_version": EVAL_VERSION,
-            "model_used":   _azure_service.deployment_name if _azure_service else None,
+            "model_used":   None,
         }
 
         resolved_state = resolve_next_state(
@@ -372,19 +370,18 @@ def _build_user_prompt(
     )
 
 
-def _get_azure_client() -> AzureOpenAIClient | None:
-    """Inicializa cliente Azure bajo demanda para evitar errores al importar en tests."""
-    global _azure_service
+def _get_azure_client() -> LLMProvider | None:
+    """Inicializa proveedor LLM bajo demanda para evitar errores al importar en tests."""
     global _azure_client
 
     if _azure_client is not None:
         return _azure_client
 
     try:
-        _azure_service = AzureOpenAIService()
-        _azure_client = AzureOpenAIClient(_azure_service)
+        from ai.provider_factory import create_llm_provider
+        _azure_client = create_llm_provider()
     except Exception as exc:
-        logger.error("answer_evaluator: Azure client not available — %s", exc)
+        logger.error("answer_evaluator: LLM provider not available — %s", exc)
         return None
 
     return _azure_client

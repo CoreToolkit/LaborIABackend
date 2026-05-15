@@ -18,6 +18,7 @@ from sqlalchemy.orm import sessionmaker
 
 import api.group_interview_sessions as group_sessions_module
 import services.group_interview_orchestrator_service as orchestrator_module
+from ai.azure_openai_provider import AzureOpenAIProvider
 from core.database import Base
 from core.jwt import create_token
 from models.group_interview_session import GroupInterviewSession
@@ -703,7 +704,7 @@ def test_create_next_round_creates_round_and_returns_200():
         return "Explica como funciona la inyeccion de dependencias en FastAPI."
 
     monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setattr(orchestrator_module.AzureOpenAIClient, "ask", _fake_ask)
+    monkeypatch.setattr(AzureOpenAIProvider, "ask", _fake_ask)
     monkeypatch.setattr(
         orchestrator_module.GroupInterviewOrchestratorService,
         "_generate_tts_with_fallback",
@@ -742,7 +743,7 @@ def test_create_next_round_emits_round_started_and_question_generated(monkeypatc
         return "Cual es la diferencia entre concurrencia y paralelismo en Python?"
 
     monkeypatch.setattr(group_sessions_module.manager, "broadcast_text", _fake_broadcast_text)
-    monkeypatch.setattr(orchestrator_module.AzureOpenAIClient, "ask", _fake_ask)
+    monkeypatch.setattr(AzureOpenAIProvider, "ask", _fake_ask)
     monkeypatch.setattr(
         orchestrator_module.GroupInterviewOrchestratorService,
         "_generate_tts_with_fallback",
@@ -797,7 +798,7 @@ def test_create_next_round_emits_question_audio_ready_on_tts_success(monkeypatch
         return b"fake-audio-bytes"
 
     monkeypatch.setattr(group_sessions_module.manager, "broadcast_text", _fake_broadcast_text)
-    monkeypatch.setattr(orchestrator_module.AzureOpenAIClient, "ask", _fake_ask)
+    monkeypatch.setattr(AzureOpenAIProvider, "ask", _fake_ask)
     monkeypatch.setattr(
         orchestrator_module.GroupInterviewOrchestratorService,
         "_generate_tts_with_fallback",
@@ -844,7 +845,7 @@ def test_create_next_round_emits_tts_error_on_tts_failure(monkeypatch):
         return "Que es un deadlock?"
 
     monkeypatch.setattr(group_sessions_module.manager, "broadcast_text", _fake_broadcast_text)
-    monkeypatch.setattr(orchestrator_module.AzureOpenAIClient, "ask", _fake_ask)
+    monkeypatch.setattr(AzureOpenAIProvider, "ask", _fake_ask)
     monkeypatch.setattr(
         orchestrator_module.GroupInterviewOrchestratorService,
         "_generate_tts_with_fallback",
@@ -995,7 +996,7 @@ def test_create_next_round_returns_403_for_non_host(monkeypatch):
         _ = (question, system_prompt, temperature, max_tokens, top_p)
         return "Pregunta cualquiera"
 
-    monkeypatch.setattr(orchestrator_module.AzureOpenAIClient, "ask", _fake_ask)
+    monkeypatch.setattr(AzureOpenAIProvider, "ask", _fake_ask)
     monkeypatch.setattr(
         orchestrator_module.GroupInterviewOrchestratorService,
         "_generate_tts_with_fallback",
@@ -1035,7 +1036,7 @@ def test_create_next_round_returns_502_when_ai_fails(monkeypatch):
         _ = (question, system_prompt, temperature, max_tokens, top_p)
         raise Exception("azure down")
 
-    monkeypatch.setattr(orchestrator_module.AzureOpenAIClient, "ask", _fake_ask)
+    monkeypatch.setattr(AzureOpenAIProvider, "ask", _fake_ask)
 
     user = _create_user()
     _create_profile(user)
