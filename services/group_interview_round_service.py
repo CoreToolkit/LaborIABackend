@@ -26,6 +26,7 @@ class GroupInterviewRoundService:
         difficulty: str | None = None,
         created_by: int | None = None,
         metadata_json: dict | None = None,
+        assigned_user_id: int | None = None,
     ) -> GroupInterviewRound:
         session = (
             self.db.query(GroupInterviewSession)
@@ -53,6 +54,7 @@ class GroupInterviewRoundService:
             status=GroupInterviewRoundStatus.ACTIVE,
             created_by=created_by,
             metadata_json=metadata_json,
+            assigned_user_id=assigned_user_id,
         )
         self.db.add(round_item)
         try:

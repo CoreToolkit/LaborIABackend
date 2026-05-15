@@ -227,6 +227,29 @@ async def start_group_session(
         },
     )
 
+    orchestrator = GroupInterviewOrchestratorService(db)
+    try:
+        intro_result = await orchestrator.generate_intro_round(
+            session_code=session.session_code,
+            requester_id=current_user["id"],
+        )
+        if intro_result:
+            _, _, _, event_payloads = intro_result
+            await _broadcast_group_event(
+                session.session_code,
+                event_payloads.round_started,
+            )
+            await _broadcast_group_event(
+                session.session_code,
+                event_payloads.question_generated,
+            )
+            await _broadcast_group_event(
+                session.session_code,
+                event_payloads.audio_event,
+            )
+    except Exception:
+        logger.exception("Error generando introduccion de sesion %s", session.session_code)
+
     response.status_code = status.HTTP_200_OK
     return GroupInterviewSessionResponseSchema.model_validate(session).model_dump(mode="json")
 
@@ -339,6 +362,7 @@ async def create_next_round(
         "difficulty": round_item.difficulty,
         "status": round_item.status.value if hasattr(round_item.status, "value") else str(round_item.status),
         "created_at": round_item.created_at,
+        "assigned_user_id": round_item.assigned_user_id,
     }
 
 
@@ -409,6 +433,13 @@ async def submit_audio_answer(
     ).first()
     if not round_item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ronda no encontrada.")
+
+    # Validar que la ronda sea para el usuario autenticado
+    if round_item.assigned_user_id is not None and round_item.assigned_user_id != current_user["id"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Esta ronda no te fue asignada. Solo el participante seleccionado puede responder.",
+        )
 
     question = db.query(Question).filter(
         Question.interview_session_id == user_session.id,
@@ -503,11 +534,13 @@ def get_group_session_state(
     current_round_data = None
     if active_round:
         current_round_data = {
+            "round_id": str(active_round.id),
             "round_index": active_round.round_index,
             "question_text": active_round.question_text,
             "target_skill": active_round.target_skill,
             "difficulty": active_round.difficulty,
             "status": active_round.status.value if hasattr(active_round.status, "value") else str(active_round.status),
+            "assigned_user_id": active_round.assigned_user_id,
         }
     else:
         # Si no hay ronda activa, obtener la última
@@ -517,11 +550,13 @@ def get_group_session_state(
         
         if last_round:
             current_round_data = {
+                "round_id": str(last_round.id),
                 "round_index": last_round.round_index,
                 "question_text": last_round.question_text,
                 "target_skill": last_round.target_skill,
                 "difficulty": last_round.difficulty,
                 "status": last_round.status.value if hasattr(last_round.status, "value") else str(last_round.status),
+                "assigned_user_id": last_round.assigned_user_id,
             }
     
     # Contar total de rondas
