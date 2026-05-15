@@ -1,0 +1,665 @@
+name: CI · Security Gate · Deploy
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  IMAGE_NAME: ${{ github.repository }}:${{ github.sha }}
+  GATE_URL: http://localhost:8000
+  OLLAMA_MODEL: mistral
+  AI_ENABLED: "true"
+  MAX_IMAGE_SIZE_MB: "1200"
+  MAX_HIGH_VULNS: "10"
+  MAX_MEDIUM_VULNS: "30"
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────
+  # 1. Tests + coverage
+  # ─────────────────────────────────────────────────────────────────────────
+  test:
+    name: Tests (>=80% coverage)
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: sqlite:///./test.db
+      JWT_SECRET: ci-secret
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests with coverage
+        run: |
+          python -m pytest -m "not integration" --cov=. --cov-report=term-missing --cov-fail-under=80
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # 2. Security Gate (Trivy → Sentinel)
+  # ─────────────────────────────────────────────────────────────────────────
+  security-gate:
+    name: Security Gate (Trivy + Sentinel)
+    runs-on: ubuntu-latest
+    needs: test
+    permissions:
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Checkout Sentinel desde su rama principal ───────────────────────
+      - name: Checkout Sentinel
+        uses: actions/checkout@v4
+        with:
+          repository: DannielEU/Sentinel-AI-CD
+          ref: develop
+          path: Sentinel-AI-CD
+
+      - name: Set lowercase image name
+        id: vars
+        run: |
+          IMAGE_NAME=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "image_name=${IMAGE_NAME}:${{ github.sha }}" >> $GITHUB_OUTPUT
+
+      # ── Build the app image ──────────────────────────────────────────────
+      - name: Build Docker image
+        run: docker build -t ${{ steps.vars.outputs.image_name }} .
+
+      # ── Install Trivy ────────────────────────────────────────────────────
+      - name: Install Trivy
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+            | sh -s -- -b /usr/local/bin
+
+      # ── Scan with Trivy (JSON + table for logs) ──────────────────────────
+      - name: Scan image with Trivy
+        run: |
+          trivy image \
+            --format json \
+            --output trivy_report.json \
+            --exit-code 0 \
+            ${{ steps.vars.outputs.image_name }}
+
+          trivy image \
+            --format table \
+            --exit-code 0 \
+            ${{ steps.vars.outputs.image_name }}
+
+      # ── Restore Ollama model cache ───────────────────────────────────────
+      - name: Restore Ollama model cache
+        id: ollama-cache
+        uses: actions/cache@v4
+        with:
+          path: Sentinel-AI-CD/ollama-data
+          key: ollama-model-${{ env.OLLAMA_MODEL }}-v1
+          restore-keys: |
+            ollama-model-${{ env.OLLAMA_MODEL }}-
+
+      # ── Start Sentinel gate with docker compose ──────────────────────────
+      - name: Start Sentinel services (Ollama + Gate) via docker compose
+        run: |
+          cd Sentinel-AI-CD
+          echo "Starting docker compose services..."
+          echo "DEBUG: AI_PROVIDER=$AI_PROVIDER"
+          echo "DEBUG: OLLAMA_MODEL=$OLLAMA_MODEL"
+
+          export AI_PROVIDER
+          export OLLAMA_MODEL
+          export OLLAMA_URL="http://ollama:11434"
+          export OLLAMA_DATA_PATH="${GITHUB_WORKSPACE}/Sentinel-AI-CD/ollama-data"
+          export MAX_IMAGE_SIZE_MB
+          export MAX_HIGH_VULNS
+          export MAX_MEDIUM_VULNS
+
+          docker compose up -d
+
+          echo "Waiting for Sentinel gate to be ready (max 60 seconds)..."
+          GATE_READY=false
+          for i in $(seq 1 30); do
+            echo "  [$i/30] Checking http://localhost:8000/health..."
+            if curl -sf http://localhost:8000/health 2>/dev/null | grep -q "status"; then
+              echo "Gate is healthy!"
+              GATE_READY=true
+              break
+            fi
+            sleep 2
+          done
+
+          if [ "$GATE_READY" = "false" ]; then
+            echo "ERROR: Gate did not start. Docker logs:"
+            docker compose logs
+            exit 1
+          fi
+
+          echo "Checking environment variables in gate container..."
+          GATE_AI_PROVIDER=$(docker compose exec -T gate env | grep '^AI_PROVIDER=' | cut -d'=' -f2)
+          GATE_OLLAMA_MODEL=$(docker compose exec -T gate env | grep '^OLLAMA_MODEL=' | cut -d'=' -f2)
+          echo "  AI_PROVIDER in gate container: $GATE_AI_PROVIDER"
+          echo "  OLLAMA_MODEL in gate container: $GATE_OLLAMA_MODEL"
+
+          if [ "$GATE_AI_PROVIDER" = "disabled" ] && [ "$AI_PROVIDER" != "disabled" ]; then
+            echo "ERROR: AI_PROVIDER was not correctly passed to the container!"
+            exit 1
+          fi
+          echo "Environment variables correctly set in gate container"
+
+          OLLAMA_PORT="${OLLAMA_PORT:-11435}"
+          echo "Waiting for Ollama API at http://localhost:${OLLAMA_PORT} (max 120 seconds)..."
+          OLLAMA_READY=false
+          for i in $(seq 1 40); do
+            echo "  [$i/40] Checking http://localhost:${OLLAMA_PORT}/api/tags..."
+            if curl -sf "http://localhost:${OLLAMA_PORT}/api/tags" 2>/dev/null | grep -q "models"; then
+              echo "Ollama API is responding!"
+              OLLAMA_READY=true
+              break
+            fi
+            sleep 3
+          done
+
+          if [ "$OLLAMA_READY" = "false" ]; then
+            echo "ERROR: Ollama did not become ready after 120 seconds!"
+            docker compose ps -a
+            docker compose logs ollama --tail=50
+            netstat -tlnp 2>/dev/null | grep -E ":(8000|11435)" || ss -tlnp 2>/dev/null | grep -E ":(8000|11435)" || true
+            curl -v http://localhost:${OLLAMA_PORT}/api/tags 2>&1 | head -30 || true
+            docker compose logs gate --tail=30 || true
+            exit 1
+          fi
+
+          MODEL="${OLLAMA_MODEL:-neural-chat}"
+          echo "Checking if model '$MODEL' is already loaded..."
+          if curl -sf "http://localhost:${OLLAMA_PORT}/api/tags" | grep -q "\"${MODEL}"; then
+            echo "Model '$MODEL' already present in cache — skipping pull."
+          else
+            echo "Model '$MODEL' not found — pulling now..."
+            if docker compose exec -T ollama ollama pull "${MODEL}"; then
+              echo "Model pull complete."
+              sleep 5
+            else
+              echo "ERROR: Model pull failed!"
+              docker compose logs ollama --tail=50
+              exit 1
+            fi
+          fi
+
+          if [ "$AI_PROVIDER" != "disabled" ]; then
+            echo ""
+            echo "AI is ENABLED (AI_PROVIDER=$AI_PROVIDER) — verifying Ollama directly..."
+
+            echo "  [1/2] Testing direct Ollama API (model: $OLLAMA_MODEL)..."
+            OLLAMA_TEST=$(printf '{"model":"%s","prompt":"What is the capital of France? Answer in one word.","stream":false,"temperature":0.1}' "$OLLAMA_MODEL")
+            if curl -sf -X POST "http://localhost:${OLLAMA_PORT}/api/generate" \
+                -H "Content-Type: application/json" \
+                -d "$OLLAMA_TEST" > /tmp/ollama_direct_test.json 2>&1; then
+              if grep -q '"response"' /tmp/ollama_direct_test.json && ! grep -q '"error"' /tmp/ollama_direct_test.json; then
+                RESPONSE=$(grep -o '"response":"[^"]*' /tmp/ollama_direct_test.json | head -1 | cut -d'"' -f4)
+                echo "  Ollama API responding: \"${RESPONSE:0:50}...\""
+              else
+                echo "  Ollama API error:"
+                cat /tmp/ollama_direct_test.json
+                exit 1
+              fi
+            else
+              echo "  Ollama direct API call failed!"
+              cat /tmp/ollama_direct_test.json
+              exit 1
+            fi
+
+            echo "  [2/2] Testing Gate with Ollama-forced payload..."
+            TEST_PAYLOAD='{"image_name":"test:latest","image_size_mb":100,"vulnerabilities":{"critical":0,"high":0,"medium":15,"low":20,"unknown":0},"base_image":"alpine:3.18","os_family":"alpine"}'
+            CURL_EXIT=0
+            curl -s -X POST http://localhost:8000/analyze-image \
+              -H "Content-Type: application/json" \
+              -d "$TEST_PAYLOAD" > /tmp/ai_test.json 2>/tmp/curl_error.log || CURL_EXIT=$?
+
+            if [ $CURL_EXIT -eq 0 ] && [ -s /tmp/ai_test.json ]; then
+              JSON_LINE=$(tail -1 /tmp/ai_test.json)
+              SOURCE=$(echo "$JSON_LINE" | grep -o '"source":"[^"]*' | cut -d'"' -f4)
+              DECISION=$(echo "$JSON_LINE" | grep -o '"decision":"[^"]*' | cut -d'"' -f4)
+              if [ -z "$SOURCE" ]; then
+                echo "  Could not parse JSON response!"
+                cat /tmp/ai_test.json
+                docker compose logs gate --tail=80 || true
+                docker compose logs ollama --tail=40 || true
+                exit 1
+              elif [ "$SOURCE" = "ai_model" ]; then
+                echo "  Gate consulted Ollama (source: ai_model) — decision: $DECISION"
+              else
+                echo "  Gate used '$SOURCE' instead of Ollama (ai_model)!"
+                cat /tmp/ai_test.json
+                exit 1
+              fi
+            else
+              echo "  Gate endpoint failed! (curl exit: $CURL_EXIT)"
+              cat /tmp/ai_test.json
+              docker compose logs gate --tail=20 || true
+              exit 1
+            fi
+            echo "AI system fully verified!"
+          fi
+
+          echo ""
+          echo "Service Status:"
+          docker compose ps
+          echo "All services ready!"
+        env:
+          AI_PROVIDER: ${{ env.AI_ENABLED == 'true' && 'ollama' || 'disabled' }}
+          OLLAMA_URL: http://ollama:11434
+          OLLAMA_MODEL: ${{ env.OLLAMA_MODEL }}
+          OLLAMA_DATA_PATH: ${{ github.workspace }}/Sentinel-AI-CD/ollama-data
+          MAX_IMAGE_SIZE_MB: ${{ env.MAX_IMAGE_SIZE_MB }}
+          MAX_HIGH_VULNS: ${{ env.MAX_HIGH_VULNS }}
+          MAX_MEDIUM_VULNS: ${{ env.MAX_MEDIUM_VULNS }}
+
+      # ── Save Ollama model cache (only when model was freshly pulled) ─────
+      - name: Save Ollama model cache
+        if: steps.ollama-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: Sentinel-AI-CD/ollama-data
+          key: ollama-model-${{ env.OLLAMA_MODEL }}-v1
+
+      # ── Verify gate is accessible ────────────────────────────────────────
+      - name: Verify gate connectivity
+        run: |
+          echo "Testing gate at http://localhost:8000..."
+          curl -v http://localhost:8000/health || echo "Gate not accessible"
+
+      # ── Call the gate via trivy_to_gate.py ───────────────────────────────
+      - name: Run Sentinel security gate
+        id: gate
+        run: |
+          echo "Sending security report to gate..."
+          echo "Gate URL: $GATE_URL"
+          echo "Report file: trivy_report.json"
+          echo "Image: ${{ steps.vars.outputs.image_name }}"
+
+          set +e
+          python3 Sentinel-AI-CD/pipeline/trivy_to_gate.py \
+            --report trivy_report.json \
+            --image  "${{ steps.vars.outputs.image_name }}" \
+            --gate   "$GATE_URL" \
+            --dockerfile ./Dockerfile
+          GATE_EXIT=$?
+          set -e
+
+          echo "Gate exit code: $GATE_EXIT"
+          case $GATE_EXIT in
+            0) echo "gate_decision=APPROVED" >> $GITHUB_OUTPUT
+               echo "gate_exit=0"            >> $GITHUB_OUTPUT ;;
+            2) echo "gate_decision=WARNING"  >> $GITHUB_OUTPUT
+               echo "gate_exit=2"            >> $GITHUB_OUTPUT ;;
+            1) echo "gate_decision=REJECTED" >> $GITHUB_OUTPUT
+               echo "gate_exit=1"            >> $GITHUB_OUTPUT ;;
+            *) echo "gate_decision=ERROR"    >> $GITHUB_OUTPUT
+               echo "gate_exit=$GATE_EXIT"   >> $GITHUB_OUTPUT ;;
+          esac
+
+      # ── Capture gate response (AI analysis) ─────────────────────────────
+      - name: Get AI analysis from gate
+        continue-on-error: true
+        run: |
+          echo "Requesting AI analysis from gate..."
+          python3 << 'PYTHON_EOF'
+          import json
+
+          with open('trivy_report.json') as f:
+              trivy_data = json.load(f)
+
+          counts = {'critical': 0, 'high': 0, 'medium': 0, 'low': 0, 'unknown': 0}
+          high_vulns = []
+          for result in trivy_data.get('Results', []):
+              for vuln in result.get('Vulnerabilities', []):
+                  sev = vuln.get('Severity', 'unknown').lower()
+                  if sev in counts:
+                      counts[sev] += 1
+                  if sev == 'high' and len(high_vulns) < 10:
+                      high_vulns.append({
+                          "id": vuln.get('VulnerabilityID', 'N/A'),
+                          "package": vuln.get('PkgName', 'N/A'),
+                          "title": vuln.get('Title', 'No description'),
+                          "description": vuln.get('Description', '')[:300]
+                      })
+
+          payload = {
+              "image_name": "${{ steps.vars.outputs.image_name }}",
+              "image_size_mb": 350,
+              "vulnerabilities": counts,
+              "base_image": "python:3.12-slim",
+              "os_family": "debian"
+          }
+          if high_vulns:
+              payload["high_vulnerabilities_details"] = high_vulns
+              print(f"Including {len(high_vulns)} HIGH vulnerabilities for AI analysis")
+
+          with open('/tmp/gate_payload.json', 'w') as f:
+              json.dump(payload, f, indent=2)
+          print("Gate payload prepared with vulnerability details")
+          PYTHON_EOF
+
+          curl -s -X POST http://localhost:8000/analyze-image \
+            -H "Content-Type: application/json" \
+            -d @/tmp/gate_payload.json > gate_response.json
+
+          echo ""
+          echo "Gate Response:"
+          cat gate_response.json | python3 -m json.tool
+
+      # ── Build PR comment + artifact report (always, even on REJECTED) ─────
+      - name: Build security report
+        id: report
+        if: always()
+        run: |
+          python3 - <<'EOF'
+          import json, os, datetime
+          from collections import Counter
+
+          decision   = os.environ.get("GATE_DECISION", "UNKNOWN")
+          image_name = os.environ.get("IMAGE_NAME", "-")
+          ai_provider = os.environ.get("AI_PROVIDER", "disabled")
+          ai_status = f"enabled ({ai_provider})" if ai_provider != "disabled" else "disabled (rule-engine only)"
+
+          try:
+              with open("trivy_report.json") as f:
+                  data = json.load(f)
+          except FileNotFoundError:
+              data = {}
+
+          counts      = Counter()
+          crit_high   = []
+          medium_rows = []
+
+          for result in data.get("Results", []):
+              target = result.get("Target", "")
+              rtype  = result.get("Type", "")
+              for v in result.get("Vulnerabilities") or []:
+                  sev = v.get("Severity", "UNKNOWN").upper()
+                  counts[sev] += 1
+                  row = {
+                      "id":    v.get("VulnerabilityID", "-"),
+                      "sev":   sev,
+                      "pkg":   v.get("PkgName", "-"),
+                      "ver":   v.get("InstalledVersion", "-"),
+                      "fixed": v.get("FixedVersion", "—"),
+                      "title": v.get("Title", "")[:80],
+                      "target": target,
+                      "type":  rtype,
+                  }
+                  if sev in ("CRITICAL", "HIGH"):
+                      crit_high.append(row)
+                  elif sev == "MEDIUM":
+                      medium_rows.append(row)
+
+          icon = {"APPROVED": "✅", "WARNING": "⚠️", "REJECTED": "❌"}.get(decision, "❓")
+          ts   = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+
+          pr_lines = [
+              f"## {icon} Sentinel Security Gate — {decision}",
+              f"_Scanned: `{image_name}` · {ts} · AI analysis: {ai_status}_",
+              "",
+              "### Vulnerability summary",
+              "",
+              "| Severity | Count |",
+              "|----------|-------|",
+              f"| 🔴 Critical | **{counts.get('CRITICAL', 0)}** |",
+              f"| 🟠 High     | **{counts.get('HIGH', 0)}** |",
+              f"| 🟡 Medium   | {counts.get('MEDIUM', 0)} |",
+              f"| 🔵 Low      | {counts.get('LOW', 0)} |",
+              f"| ⚪ Unknown  | {counts.get('UNKNOWN', 0)} |",
+          ]
+
+          if crit_high:
+              pr_lines += [
+                  "",
+                  "### 🔴🟠 Critical & High — action required",
+                  "",
+                  "| CVE | Sev | Package | Installed | Fixed | Description |",
+                  "|-----|-----|---------|-----------|-------|-------------|",
+              ]
+              for r in crit_high[:25]:
+                  pr_lines.append(
+                      f"| `{r['id']}` | {r['sev']} | `{r['pkg']}` "
+                      f"| {r['ver']} | {r['fixed']} | {r['title']} |"
+                  )
+              if len(crit_high) > 25:
+                  pr_lines.append(f"_…and {len(crit_high)-25} more — see the full artifact report._")
+
+          try:
+              with open("gate_response.json") as f:
+                  gate_resp = json.load(f)
+              reason          = gate_resp.get("reason", "")
+              recommendations = gate_resp.get("recommendations", [])
+              ai_summary      = gate_resp.get("summary", "")
+              source          = gate_resp.get("source", "rule_engine")
+              dashboard_url   = gate_resp.get("dashboard_url", "")
+
+              if dashboard_url:
+                  pr_lines += ["", f"### 📊 [Security Dashboard]({dashboard_url})"]
+
+              if source == "ai_model":
+                  header = "### 🤖 AI Analysis Feedback"
+              else:
+                  header = "### 📋 Rule Engine Decision"
+
+              if reason or recommendations or ai_summary:
+                  pr_lines += ["", header]
+                  if source == "ai_model":
+                      pr_lines.append("_Decision made by the AI model after contextual analysis._")
+                  if reason:
+                      pr_lines += ["", f"**Analysis:** {reason}"]
+                  if recommendations:
+                      pr_lines += ["", "**Recommendations:**"]
+                      for i, rec in enumerate(recommendations, 1):
+                          pr_lines.append(f"  {i}. {rec}")
+                  if ai_summary:
+                      pr_lines += ["", "**Summary:**", f"> {ai_summary}"]
+          except (FileNotFoundError, json.JSONDecodeError):
+              pass
+
+          if decision == "REJECTED":
+              pr_lines += [
+                  "",
+                  "> **Deployment blocked.** Fix all Critical vulnerabilities before merging.",
+                  "> Download the full artifact report from the Actions run for complete details.",
+              ]
+          elif decision == "WARNING":
+              pr_lines += [
+                  "",
+                  "> Deployment allowed with warnings. Open a remediation ticket for High/Medium findings.",
+              ]
+
+          with open("pr_comment.md", "w") as f:
+              f.write("\n".join(pr_lines))
+
+          art_lines = [
+              "# Sentinel Security Report",
+              "",
+              f"- **Decision:** {icon} {decision}",
+              f"- **Image:** `{image_name}`",
+              f"- **Scanned at:** {ts}",
+              f"- **AI analysis:** {ai_status}",
+              "",
+              "## Vulnerability counts",
+              "",
+              "| Severity | Count |",
+              "|----------|-------|",
+              f"| Critical | {counts.get('CRITICAL', 0)} |",
+              f"| High     | {counts.get('HIGH', 0)} |",
+              f"| Medium   | {counts.get('MEDIUM', 0)} |",
+              f"| Low      | {counts.get('LOW', 0)} |",
+              f"| Unknown  | {counts.get('UNKNOWN', 0)} |",
+              f"| **Total**| **{sum(counts.values())}** |",
+          ]
+
+          if crit_high:
+              art_lines += [
+                  "",
+                  "## Critical & High vulnerabilities",
+                  "",
+                  "| CVE | Severity | Package | Installed | Fixed | Target | Description |",
+                  "|-----|----------|---------|-----------|-------|--------|-------------|",
+              ]
+              for r in crit_high:
+                  art_lines.append(
+                      f"| `{r['id']}` | {r['sev']} | `{r['pkg']}` "
+                      f"| {r['ver']} | {r['fixed']} | {r['target']} | {r['title']} |"
+                  )
+
+          if medium_rows:
+              art_lines += [
+                  "",
+                  "## Medium vulnerabilities",
+                  "",
+                  "| CVE | Package | Installed | Fixed | Target | Description |",
+                  "|-----|---------|-----------|-------|--------|-------------|",
+              ]
+              for r in medium_rows[:50]:
+                  art_lines.append(
+                      f"| `{r['id']}` | `{r['pkg']}` "
+                      f"| {r['ver']} | {r['fixed']} | {r['target']} | {r['title']} |"
+                  )
+              if len(medium_rows) > 50:
+                  art_lines.append(f"_…and {len(medium_rows)-50} more medium findings._")
+
+          art_lines += [
+              "",
+              "## Rule engine thresholds",
+              "",
+              "| Rule | Threshold | Result |",
+              "|------|-----------|--------|",
+              f"| Critical vulns | > 0 → REJECTED | {counts.get('CRITICAL',0)} found |",
+              f"| High vulns     | > 10 → REJECTED / 1-10 → WARNING | {counts.get('HIGH',0)} found |",
+              f"| Medium vulns   | > 30 → WARNING | {counts.get('MEDIUM',0)} found |",
+          ]
+
+          with open("security_report.md", "w") as f:
+              f.write("\n".join(art_lines))
+
+          print("Reports written: pr_comment.md, security_report.md")
+          EOF
+        env:
+          GATE_DECISION: ${{ steps.gate.outputs.gate_decision }}
+          IMAGE_NAME: ${{ steps.vars.outputs.image_name }}
+          AI_PROVIDER: ${{ env.AI_ENABLED == 'true' && 'ollama' || 'disabled' }}
+
+      # ── Post comment on PR (always, even on REJECTED) ─────────────────────
+      - name: Post security summary on PR
+        if: always() && github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          path: pr_comment.md
+
+      # ── Upload artifact with full report ──────────────────────────────────
+      - name: Upload security report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sentinel-security-report
+          path: |
+            security_report.md
+            trivy_report.json
+          retention-days: 30
+
+      # ── Fail the job NOW if gate rejected ─────────────────────────────────
+      - name: Enforce gate decision
+        if: always()
+        run: |
+          EXIT="${{ steps.gate.outputs.gate_exit }}"
+          if [ "$EXIT" = "1" ]; then
+            echo "Gate decision: REJECTED — deployment blocked."
+            exit 1
+          fi
+          if [ "$EXIT" = "3" ] || [ -z "$EXIT" ]; then
+            echo "Gate error — failing safely."
+            exit 1
+          fi
+          echo "Gate decision: ${{ steps.gate.outputs.gate_decision }} — continuing."
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # 3. Build image + dispatch infra update
+  # ─────────────────────────────────────────────────────────────────────────
+  build-and-push:
+    name: Build & Push to ACR
+    runs-on: ubuntu-latest
+    needs: security-gate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    env:
+      ACR_NAME: laboriaacr
+      IMAGE_NAME: backend
+      ACR_URL: laboriaacr.azurecr.io
+
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tag }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login en Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Login en ACR
+        run: az acr login --name ${{ env.ACR_NAME }}
+
+      - name: Generate image tag
+        id: meta
+        run: |
+          SHORT_SHA=$(echo "${GITHUB_SHA}" | cut -c1-8)
+          echo "tag=$SHORT_SHA" >> $GITHUB_OUTPUT
+          echo "Image tag: $SHORT_SHA"
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            -t ${{ env.ACR_URL }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.tag }} \
+            -t ${{ env.ACR_URL }}/${{ env.IMAGE_NAME }}:latest \
+            .
+
+      - name: Push image to ACR
+        run: |
+          docker push ${{ env.ACR_URL }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.tag }}
+          docker push ${{ env.ACR_URL }}/${{ env.IMAGE_NAME }}:latest
+
+  trigger-deploy:
+    name: Trigger Terraform Deploy
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Dispatch to infrastructure repo
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.TERRAFORM_REPO_TOKEN }}
+          repository: CoreToolkit/LaborIAInfrastructure
+          event-type: backend-updated
+          client-payload: |
+            {
+              "service": "backend",
+              "image_tag": "${{ needs.build-and-push.outputs.image_tag }}",
+              "commit_sha": "${{ github.sha }}"
+            }
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # 4. Deploy only on develop, only if both jobs passed
+  # ─────────────────────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to Render
+    runs-on: ubuntu-latest
+    needs: [test, security-gate]
+    if: github.ref == 'refs/heads/develop'
+
+    steps:
+      - name: Trigger Render deploy hook
+        env:
+          deploy_url: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: curl -X POST "$deploy_url"
