@@ -18,6 +18,7 @@ class GroupInterviewRoundRepository:
         difficulty: str | None = None,
         status: GroupInterviewRoundStatus = GroupInterviewRoundStatus.ACTIVE,
         created_by: int | None = None,
+        selected_user_id: int | None = None,
         metadata_json: dict | None = None,
     ) -> GroupInterviewRound:
         round_item = GroupInterviewRound(
@@ -28,6 +29,7 @@ class GroupInterviewRoundRepository:
             difficulty=difficulty,
             status=status,
             created_by=created_by,
+            selected_user_id=selected_user_id,
             metadata_json=metadata_json,
         )
         self.db.add(round_item)

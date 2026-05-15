@@ -13,6 +13,7 @@ from core.jwt import get_current_user
 from exceptions.interview_session_exceptions import InterviewSessionNotFoundError
 from exceptions.profile_exceptions import ProfileNotFoundError
 from models.evaluation import Evaluation, EvaluationStatus
+from models.user import User
 from models.interview_session import InterviewSession
 from models.question import Question
 from models.group_interview_round import GroupInterviewRound, GroupInterviewRoundStatus
@@ -340,6 +341,8 @@ async def create_next_round(
         "difficulty": round_item.difficulty,
         "status": round_item.status.value if hasattr(round_item.status, "value") else str(round_item.status),
         "created_at": round_item.created_at,
+        "selected_user_id": round_item.selected_user_id,
+        "selected_user_name": event_payloads.question_generated.get("selected_user_name"),
     }
 
 
@@ -411,13 +414,16 @@ async def submit_audio_answer(
     if not round_item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ronda no encontrada.")
 
+    if round_item.selected_user_id and round_item.selected_user_id != current_user["id"]:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
     question = db.query(Question).filter(
         Question.interview_session_id == user_session.id,
         Question.round_index == round_item.round_index,
         Question.group_session_id == group_session.id,
     ).first()
     if not question:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No hay pregunta registrada para esta ronda.")
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     audio_bytes = await audio_file.read()
     await audio_file.close()
@@ -509,6 +515,12 @@ def get_group_session_state(
             "target_skill": active_round.target_skill,
             "difficulty": active_round.difficulty,
             "status": active_round.status.value if hasattr(active_round.status, "value") else str(active_round.status),
+            "selected_user_id": active_round.selected_user_id,
+            "selected_user_name": (
+                db.query(User.name).filter(User.id == active_round.selected_user_id).scalar()
+                if active_round.selected_user_id
+                else None
+            ),
         }
     else:
         # Si no hay ronda activa, obtener la última
@@ -523,6 +535,12 @@ def get_group_session_state(
                 "target_skill": last_round.target_skill,
                 "difficulty": last_round.difficulty,
                 "status": last_round.status.value if hasattr(last_round.status, "value") else str(last_round.status),
+                "selected_user_id": last_round.selected_user_id,
+                "selected_user_name": (
+                    db.query(User.name).filter(User.id == last_round.selected_user_id).scalar()
+                    if last_round.selected_user_id
+                    else None
+                ),
             }
     
     # Contar total de rondas

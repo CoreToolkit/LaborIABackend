@@ -46,6 +46,7 @@ class GroupInterviewRound(Base):
     started_at = Column(DateTime(timezone=True), server_default=func.now())
     closed_at = Column(DateTime(timezone=True), nullable=True)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    selected_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     metadata_json = Column(JSON, nullable=True)
 
     group_interview_session = relationship("GroupInterviewSession", backref="rounds")

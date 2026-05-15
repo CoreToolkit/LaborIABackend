@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import random
 import time
 from datetime import datetime, timezone
 
@@ -15,7 +16,9 @@ from ai.question_deduplication import (
 )
 from exceptions.profile_exceptions import ProfileNotFoundError
 from models.interview_session import InterviewSession
+from models.profile import Profile
 from models.question import Question
+from models.user import User
 from services.group_interview_round_service import GroupInterviewRoundService
 from services.group_interview_session_service import GroupInterviewSessionService
 from services.global_question_service import GlobalQuestionService
@@ -118,12 +121,13 @@ class GroupInterviewOrchestratorService:
         if group_session.status != "in_progress":
             raise ValueError("La sesión grupal debe estar en estado 'in_progress'")
 
-        profile = self.profile_service.get_profile_by_user_id(requester_id)
+        selected_user_id = self._pick_selected_user_id(group_session.id, requester_id)
+        profile = self.profile_service.get_profile_by_user_id(selected_user_id)
         if not profile:
             raise ProfileNotFoundError()
 
-        skills = self.profile_service.list_skills(requester_id)
-        experiences = self.profile_service.list_experiences(requester_id)
+        skills = self.profile_service.list_skills(selected_user_id)
+        experiences = self.profile_service.list_experiences(selected_user_id)
 
         effective_difficulty = difficulty or group_session.difficulty or "adaptive"
         previous_rounds = self.round_service.round_repo.list_by_session_id(group_session.id)
@@ -131,6 +135,7 @@ class GroupInterviewOrchestratorService:
             [item for item in previous_rounds if not self._is_intro_round(item)]
         )
         global_previous_questions = self.global_question_service.list_all_questions_texts()
+        prompt_history = global_previous_questions[-60:]
 
         role_name = group_session.role.name if group_session.role else "rol tecnico"
         role_description = group_session.role.description if group_session.role else ""
@@ -146,6 +151,10 @@ class GroupInterviewOrchestratorService:
                 global_previous_questions,
                 generated_in_request,
             )
+            prompt_previous = merge_previous_questions(
+                prompt_history,
+                generated_in_request,
+            )
 
             system_prompt, prompt = build_group_question_generation_prompts(
                 profile=profile,
@@ -155,7 +164,7 @@ class GroupInterviewOrchestratorService:
                 role_description=role_description,
                 target_skill=target_skill,
                 difficulty=effective_difficulty,
-                previous_questions=combined_previous,
+                previous_questions=prompt_previous,
                 round_index=session_round_count,
             )
 
@@ -220,13 +229,18 @@ class GroupInterviewOrchestratorService:
             target_skill=target_skill,
             difficulty=effective_difficulty,
             created_by=requester_id,
+            selected_user_id=selected_user_id,
             metadata_json=round_metadata,
         )
 
         self.global_question_service.record_question(question_text)
 
         # Task-066-07: persistir pregunta en tabla Question para cada InterviewSession del grupo
-        self._persist_round_questions(group_session_id=group_session.id, round_item=round_item)
+        self._persist_round_questions(
+            group_session_id=group_session.id,
+            round_item=round_item,
+            selected_user_id=selected_user_id,
+        )
 
         # AB#323: construir payloads de eventos aquí, no en el router
         event_payloads = self._build_round_event_payloads(
@@ -294,32 +308,40 @@ class GroupInterviewOrchestratorService:
     # Persistencia de preguntas por ronda (Task-066-07)
     # ------------------------------------------------------------------
 
-    def _persist_round_questions(self, *, group_session_id: int, round_item) -> None:
+    def _persist_round_questions(
+        self,
+        *,
+        group_session_id: int,
+        round_item,
+        selected_user_id: int,
+    ) -> None:
         """
         Crea un registro Question por cada InterviewSession participante del grupo.
         Operación best-effort: un fallo no interrumpe el flujo de la ronda.
         """
         try:
-            interview_sessions = (
+            interview_session = (
                 self.db.query(InterviewSession)
-                .filter(InterviewSession.group_interview_session_id == group_session_id)
-                .all()
-            )
-            questions = [
-                Question(
-                    interview_session_id=iv_session.id,
-                    question_text=round_item.question_text or "",
-                    category=round_item.target_skill,
-                    difficulty=round_item.difficulty,
-                    expected_topics=None,
-                    group_session_id=group_session_id,
-                    round_index=round_item.round_index,
+                .filter(
+                    InterviewSession.group_interview_session_id == group_session_id,
+                    InterviewSession.user_id == selected_user_id,
                 )
-                for iv_session in interview_sessions
-            ]
-            if questions:
-                self.db.add_all(questions)
-                self.db.commit()
+                .first()
+            )
+            if not interview_session:
+                return
+
+            question = Question(
+                interview_session_id=interview_session.id,
+                question_text=round_item.question_text or "",
+                category=round_item.target_skill,
+                difficulty=round_item.difficulty,
+                expected_topics=None,
+                group_session_id=group_session_id,
+                round_index=round_item.round_index,
+            )
+            self.db.add(question)
+            self.db.commit()
         except Exception:
             self.db.rollback()
             logger.exception(
@@ -345,6 +367,8 @@ class GroupInterviewOrchestratorService:
         emitted_at = datetime.now(timezone.utc).isoformat()
         round_id = str(round_item.id)
         is_intro = self._is_intro_round(round_item)
+        selected_user_id = getattr(round_item, "selected_user_id", None)
+        selected_user_name = self._resolve_user_name(selected_user_id)
 
         round_started = {
             "event": "round_started",
@@ -352,6 +376,8 @@ class GroupInterviewOrchestratorService:
             "round_id": round_id,
             "round_index": round_item.round_index,
             "is_intro": is_intro,
+            "selected_user_id": selected_user_id,
+            "selected_user_name": selected_user_name,
             "emitted_at": emitted_at,
         }
 
@@ -364,6 +390,8 @@ class GroupInterviewOrchestratorService:
             "target_skill": round_item.target_skill,
             "difficulty": round_item.difficulty,
             "is_intro": is_intro,
+            "selected_user_id": selected_user_id,
+            "selected_user_name": selected_user_name,
             "emitted_at": emitted_at,
         }
 
@@ -377,6 +405,8 @@ class GroupInterviewOrchestratorService:
                 "audio_b64": tts_result.audio_b64,
                 "question_text": round_item.question_text,
                 "is_intro": is_intro,
+                "selected_user_id": selected_user_id,
+                "selected_user_name": selected_user_name,
                 "emitted_at": emitted_at,
             }
         else:
@@ -389,6 +419,8 @@ class GroupInterviewOrchestratorService:
                 "tts_error": tts_result.tts_error or _TTS_SAFE_ERROR_MSG,
                 "question_text": round_item.question_text,
                 "is_intro": is_intro,
+                "selected_user_id": selected_user_id,
+                "selected_user_name": selected_user_name,
                 "emitted_at": emitted_at,
             }
 
@@ -460,3 +492,36 @@ class GroupInterviewOrchestratorService:
             "como abordarias situaciones reales. Empecemos."
         )
         return intro
+
+    def _pick_selected_user_id(self, group_session_id: int, fallback_user_id: int) -> int:
+        session_users = (
+            self.db.query(InterviewSession.user_id)
+            .filter(InterviewSession.group_interview_session_id == group_session_id)
+            .all()
+        )
+        participant_ids = [row[0] for row in session_users if row and row[0]]
+        if participant_ids:
+            profiled_ids = (
+                self.db.query(Profile.user_id)
+                .filter(Profile.user_id.in_(participant_ids))
+                .all()
+            )
+            participant_ids = [row[0] for row in profiled_ids if row and row[0]]
+
+        if not participant_ids:
+            return fallback_user_id
+
+        last_round = self.round_service.round_repo.get_last_by_session_id(group_session_id)
+        last_selected = getattr(last_round, "selected_user_id", None) if last_round else None
+        candidates = [uid for uid in participant_ids if uid != last_selected]
+        if not candidates:
+            candidates = participant_ids
+        return random.choice(candidates)
+
+    def _resolve_user_name(self, user_id: int | None) -> str | None:
+        if not user_id:
+            return None
+        user = self.db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return None
+        return user.name

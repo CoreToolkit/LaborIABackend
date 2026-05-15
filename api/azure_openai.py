@@ -141,6 +141,11 @@ async def generate_interview_question(
             backend_history,
             global_history,
         )
+        prompt_history = merge_previous_questions(
+            body_previous_questions,
+            backend_history,
+            global_history[-60:],
+        )
 
         options = get_question_generation_options(
             {
@@ -155,6 +160,7 @@ async def generate_interview_question(
 
         for attempt in range(MAX_GENERATION_ATTEMPTS):
             combined_previous = merge_previous_questions(previous_questions, generated_in_request)
+            prompt_previous = merge_previous_questions(prompt_history, generated_in_request)
 
             system_prompt, prompt = build_question_generation_prompts(
                 profile=profile,
@@ -162,7 +168,7 @@ async def generate_interview_question(
                 experiences=experiences,
                 target_skill=target_skill,
                 difficulty=body.get("difficulty"),
-                previous_questions=combined_previous,
+                previous_questions=prompt_previous,
             )
 
             if attempt > 0:
