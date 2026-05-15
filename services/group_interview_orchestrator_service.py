@@ -8,11 +8,17 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from ai.azure_openai_client import AzureOpenAIClient
+from ai.question_deduplication import (
+    MAX_GENERATION_ATTEMPTS,
+    is_repeated_or_too_similar,
+    merge_previous_questions,
+)
 from exceptions.profile_exceptions import ProfileNotFoundError
 from models.interview_session import InterviewSession
 from models.question import Question
 from services.group_interview_round_service import GroupInterviewRoundService
 from services.group_interview_session_service import GroupInterviewSessionService
+from services.global_question_service import GlobalQuestionService
 from services.profile_service import ProfileService
 from utils.prompts.question_generation import build_group_question_generation_prompts
 
@@ -72,6 +78,7 @@ class GroupInterviewOrchestratorService:
         self.profile_service = ProfileService(db)
         self.group_session_service = GroupInterviewSessionService(db)
         self.round_service = GroupInterviewRoundService(db)
+        self.global_question_service = GlobalQuestionService(db)
         self.azure_client = AzureOpenAIClient()
 
         # ElevenLabs es opcional: si no está configurado, el flujo continúa sin TTS
@@ -120,40 +127,64 @@ class GroupInterviewOrchestratorService:
 
         effective_difficulty = difficulty or group_session.difficulty or "adaptive"
         previous_rounds = self.round_service.round_repo.list_by_session_id(group_session.id)
-        previous_questions = [
-            item.question_text.strip()
-            for item in previous_rounds
-            if item.question_text
-            and item.question_text.strip()
-            and not self._is_intro_round(item)
-        ]
+        session_round_count = len(
+            [item for item in previous_rounds if not self._is_intro_round(item)]
+        )
+        global_previous_questions = self.global_question_service.list_all_questions_texts()
 
         role_name = group_session.role.name if group_session.role else "rol tecnico"
         role_description = group_session.role.description if group_session.role else ""
 
-        system_prompt, prompt = build_group_question_generation_prompts(
-            profile=profile,
-            skills=skills,
-            experiences=experiences,
-            role_name=role_name,
-            role_description=role_description,
-            target_skill=target_skill,
-            difficulty=effective_difficulty,
-            previous_questions=previous_questions,
-            round_index=len(previous_questions),
-        )
+        generated_question = ""
+        generated_in_request: list[str] = []
+        retried = False
 
         # AB#328: medir tiempo de generación de texto
         t0_text = time.monotonic()
-        try:
-            generated_question = await self.azure_client.ask(
-                question=prompt,
-                system_prompt=system_prompt,
-                temperature=0.8,
-                max_tokens=180,
+        for attempt in range(MAX_GENERATION_ATTEMPTS):
+            combined_previous = merge_previous_questions(
+                global_previous_questions,
+                generated_in_request,
             )
-        except Exception as exc:
-            raise RuntimeError(f"Error al generar pregunta con IA: {exc}") from exc
+
+            system_prompt, prompt = build_group_question_generation_prompts(
+                profile=profile,
+                skills=skills,
+                experiences=experiences,
+                role_name=role_name,
+                role_description=role_description,
+                target_skill=target_skill,
+                difficulty=effective_difficulty,
+                previous_questions=combined_previous,
+                round_index=session_round_count,
+            )
+
+            if attempt > 0:
+                retried = True
+                forbidden_examples = "\n".join(f"- {item}" for item in combined_previous[-8:])
+                system_prompt = (
+                    f"{system_prompt} Nunca repitas preguntas previas, incluso con redacciones similares. "
+                    f"Preguntas prohibidas:\n{forbidden_examples}"
+                )
+
+            try:
+                generated_question = await self.azure_client.ask(
+                    question=prompt,
+                    system_prompt=system_prompt,
+                    temperature=0.8,
+                    max_tokens=180,
+                )
+            except Exception as exc:
+                raise RuntimeError(f"Error al generar pregunta con IA: {exc}") from exc
+
+            if generated_question and not is_repeated_or_too_similar(
+                generated_question, combined_previous
+            ):
+                break
+
+            if generated_question:
+                generated_in_request.append(generated_question)
+
         text_elapsed_ms = int((time.monotonic() - t0_text) * 1000)
 
         if not generated_question or not generated_question.strip():
@@ -170,6 +201,7 @@ class GroupInterviewOrchestratorService:
             "tts_status": tts_result.tts_status,
             "tts_elapsed_ms": tts_result.tts_elapsed_ms,
             "is_intro": False,
+            "retried_for_uniqueness": retried,
         }
         if tts_result.tts_error:
             round_metadata["tts_error"] = tts_result.tts_error
@@ -190,6 +222,8 @@ class GroupInterviewOrchestratorService:
             created_by=requester_id,
             metadata_json=round_metadata,
         )
+
+        self.global_question_service.record_question(question_text)
 
         # Task-066-07: persistir pregunta en tabla Question para cada InterviewSession del grupo
         self._persist_round_questions(group_session_id=group_session.id, round_item=round_item)
