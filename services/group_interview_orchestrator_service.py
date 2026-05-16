@@ -8,6 +8,7 @@ from collections import Counter
 from sqlalchemy.orm import Session
 
 from ai.provider import LLMProvider
+from core.config import settings
 from ai.question_deduplication import (
     MAX_GENERATION_ATTEMPTS,
     is_repeated_or_too_similar,
@@ -390,6 +391,10 @@ class GroupInterviewOrchestratorService:
         Si falla: retorna TTSResult con tts_status="fallback", sin lanzar excepción.
         El mensaje de error expuesto al cliente es siempre el mensaje seguro.
         """
+        if not settings.ENABLE_TTS:
+            logger.info("TTS deshabilitado por ENABLE_TTS=False, usando fallback de texto")
+            return TTSResult(audio_b64=None, tts_status="fallback", tts_error=_TTS_SAFE_ERROR_MSG)
+
         if self._elevenlabs_client is None:
             logger.info("TTS deshabilitado (ElevenLabs no configurado), usando fallback de texto")
             return TTSResult(

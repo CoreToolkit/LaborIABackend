@@ -17,6 +17,7 @@ import logging
 from sqlalchemy.orm import Session
 
 from ai.azure_openai_client import AzureOpenAIClient
+from core.config import settings
 from repositories.match_result_repository import MatchResultRepository
 from repositories.profile_repository import ProfileRepository
 from services.match_calculator import detect_skill_gaps_for_role
@@ -55,8 +56,11 @@ def _priority_from_gaps(skill_gaps: list[dict]) -> str:
 async def _generate_reason(role_name: str, match_score: float, skill_gaps: list[dict]) -> str:
     """
     Llama a Azure OpenAI para generar el campo reason.
-    Fallback a texto genérico si falla — nunca lanza excepción.
+    Fallback a texto genérico si falla o si ENABLE_LLM_REASON_GENERATION=False.
     """
+    if not settings.ENABLE_LLM_REASON_GENERATION:
+        return _fallback_reason(role_name, match_score)
+
     try:
         client = AzureOpenAIClient()
 

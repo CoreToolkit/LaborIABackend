@@ -3,6 +3,7 @@ import logging
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
 
+from core.config import settings
 from models.evaluation import Evaluation, EvaluationStatus
 from services.badge_service import BadgeService
 from services.metrics_service import UserMetricsService
@@ -25,7 +26,7 @@ def trigger_post_evaluation(
     """
     UserMetricsService(db).update_for_user(user_id)
 
-    if total_questions <= 0:
+    if not settings.ENABLE_BADGES or total_questions <= 0:
         return
 
     completed_q = (

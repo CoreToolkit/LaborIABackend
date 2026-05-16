@@ -77,5 +77,10 @@ class Settings(BaseSettings):
     EDUCATION_MATCH_WEIGHT: float = 0.15
     PREFERENCES_MATCH_WEIGHT: float = 0.10
 
+    # Feature flags (Defer Binding: toggle features without code changes)
+    ENABLE_TTS: bool = True
+    ENABLE_BADGES: bool = True
+    ENABLE_LLM_REASON_GENERATION: bool = True
+
 
 settings = Settings()
