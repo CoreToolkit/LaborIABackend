@@ -2,6 +2,7 @@ import os
 from types import SimpleNamespace
 
 import pytest
+from core.config import settings as app_settings
 
 os.environ.setdefault("SPEECH_KEY", "test-speech-key")
 os.environ.setdefault("SPEECH_REGION", "eastus")
@@ -172,8 +173,8 @@ def test_azure_speech_service_wraps_provider_errors(monkeypatch):
 
 
 def test_azure_speech_service_requires_configuration(monkeypatch):
-    monkeypatch.delenv("SPEECH_KEY", raising=False)
-    monkeypatch.delenv("SPEECH_REGION", raising=False)
+    monkeypatch.setattr(app_settings, "SPEECH_KEY", None)
+    monkeypatch.setattr(app_settings, "SPEECH_REGION", None)
     monkeypatch.setattr(azure_speech_service_module, "speechsdk", _FakeSpeechSdk)
 
     with pytest.raises(RuntimeError, match="Faltan variables de entorno de Azure Speech: SPEECH_KEY, SPEECH_REGION"):

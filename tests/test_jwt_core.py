@@ -1,5 +1,5 @@
-import time
 import pytest
+from core.config import settings as app_settings
 import jwt as pyjwt
 from datetime import datetime, timezone, timedelta
 
@@ -16,9 +16,9 @@ def _encode_raw(payload: dict, secret: str = "secret-key", algorithm: str = "HS2
 # ── roundtrip ─────────────────────────────────────────────────────────────────
 
 def test_create_and_decode_access_token_roundtrip(monkeypatch):
-    monkeypatch.setenv("JWT_SECRET", "secret-key")
-    monkeypatch.delenv("JWT_ISSUER", raising=False)
-    monkeypatch.delenv("JWT_AUDIENCE", raising=False)
+    monkeypatch.setattr(app_settings, "JWT_SECRET", "secret-key")
+    monkeypatch.setattr(app_settings, "JWT_ISSUER", None)
+    monkeypatch.setattr(app_settings, "JWT_AUDIENCE", None)
     payload = {"email": "user@example.com", "name": "User"}
 
     token = core_jwt.create_token(payload)
@@ -33,9 +33,9 @@ def test_create_and_decode_access_token_roundtrip(monkeypatch):
 
 
 def test_access_token_expired(monkeypatch):
-    monkeypatch.setenv("JWT_SECRET", "secret-key")
-    monkeypatch.delenv("JWT_ISSUER", raising=False)
-    monkeypatch.delenv("JWT_AUDIENCE", raising=False)
+    monkeypatch.setattr(app_settings, "JWT_SECRET", "secret-key")
+    monkeypatch.setattr(app_settings, "JWT_ISSUER", None)
+    monkeypatch.setattr(app_settings, "JWT_AUDIENCE", None)
     monkeypatch.setattr(core_jwt, "ACCESS_TOKEN_EXPIRE_HOURS", -1)
 
     token = core_jwt.create_token({"email": "user@example.com"})
@@ -45,9 +45,9 @@ def test_access_token_expired(monkeypatch):
 
 
 def test_decode_invalid_signature(monkeypatch):
-    monkeypatch.setenv("JWT_SECRET", "secret-key")
-    monkeypatch.delenv("JWT_ISSUER", raising=False)
-    monkeypatch.delenv("JWT_AUDIENCE", raising=False)
+    monkeypatch.setattr(app_settings, "JWT_SECRET", "secret-key")
+    monkeypatch.setattr(app_settings, "JWT_ISSUER", None)
+    monkeypatch.setattr(app_settings, "JWT_AUDIENCE", None)
     now = datetime.now(timezone.utc)
     forged = _encode_raw(
         {"email": "user@example.com", "sub": "user@example.com",
@@ -60,9 +60,9 @@ def test_decode_invalid_signature(monkeypatch):
 
 
 def test_create_and_decode_refresh_token(monkeypatch):
-    monkeypatch.setenv("JWT_SECRET", "secret-key")
-    monkeypatch.delenv("JWT_ISSUER", raising=False)
-    monkeypatch.delenv("JWT_AUDIENCE", raising=False)
+    monkeypatch.setattr(app_settings, "JWT_SECRET", "secret-key")
+    monkeypatch.setattr(app_settings, "JWT_ISSUER", None)
+    monkeypatch.setattr(app_settings, "JWT_AUDIENCE", None)
     payload = {"email": "user@example.com"}
     token = core_jwt.create_refresh_token(payload)
     decoded = core_jwt.decode_refresh_token(token)
@@ -73,9 +73,9 @@ def test_create_and_decode_refresh_token(monkeypatch):
 # ── iss validation ────────────────────────────────────────────────────────────
 
 def test_token_with_correct_iss_is_accepted(monkeypatch):
-    monkeypatch.setenv("JWT_SECRET", "secret-key")
-    monkeypatch.setenv("JWT_ISSUER", "laboria-backend")
-    monkeypatch.delenv("JWT_AUDIENCE", raising=False)
+    monkeypatch.setattr(app_settings, "JWT_SECRET", "secret-key")
+    monkeypatch.setattr(app_settings, "JWT_ISSUER", "laboria-backend")
+    monkeypatch.setattr(app_settings, "JWT_AUDIENCE", None)
 
     token = core_jwt.create_token({"email": "user@example.com"})
     decoded = core_jwt.decode_token(token)
@@ -83,9 +83,9 @@ def test_token_with_correct_iss_is_accepted(monkeypatch):
 
 
 def test_token_without_iss_rejected_when_issuer_configured(monkeypatch):
-    monkeypatch.setenv("JWT_SECRET", "secret-key")
-    monkeypatch.setenv("JWT_ISSUER", "laboria-backend")
-    monkeypatch.delenv("JWT_AUDIENCE", raising=False)
+    monkeypatch.setattr(app_settings, "JWT_SECRET", "secret-key")
+    monkeypatch.setattr(app_settings, "JWT_ISSUER", "laboria-backend")
+    monkeypatch.setattr(app_settings, "JWT_AUDIENCE", None)
     now = datetime.now(timezone.utc)
     token = _encode_raw(
         {"sub": "user@example.com", "exp": now + timedelta(hours=1), "iat": now},
@@ -98,9 +98,9 @@ def test_token_without_iss_rejected_when_issuer_configured(monkeypatch):
 
 
 def test_token_with_wrong_iss_rejected(monkeypatch):
-    monkeypatch.setenv("JWT_SECRET", "secret-key")
-    monkeypatch.setenv("JWT_ISSUER", "laboria-backend")
-    monkeypatch.delenv("JWT_AUDIENCE", raising=False)
+    monkeypatch.setattr(app_settings, "JWT_SECRET", "secret-key")
+    monkeypatch.setattr(app_settings, "JWT_ISSUER", "laboria-backend")
+    monkeypatch.setattr(app_settings, "JWT_AUDIENCE", None)
     now = datetime.now(timezone.utc)
     token = _encode_raw(
         {"sub": "user@example.com", "iss": "other-app",
@@ -116,9 +116,9 @@ def test_token_with_wrong_iss_rejected(monkeypatch):
 # ── aud validation ────────────────────────────────────────────────────────────
 
 def test_token_with_correct_aud_is_accepted(monkeypatch):
-    monkeypatch.setenv("JWT_SECRET", "secret-key")
-    monkeypatch.delenv("JWT_ISSUER", raising=False)
-    monkeypatch.setenv("JWT_AUDIENCE", "laboria-frontend")
+    monkeypatch.setattr(app_settings, "JWT_SECRET", "secret-key")
+    monkeypatch.setattr(app_settings, "JWT_ISSUER", None)
+    monkeypatch.setattr(app_settings, "JWT_AUDIENCE", "laboria-frontend")
 
     token = core_jwt.create_token({"email": "user@example.com"})
     decoded = core_jwt.decode_token(token)
@@ -126,9 +126,9 @@ def test_token_with_correct_aud_is_accepted(monkeypatch):
 
 
 def test_token_without_aud_rejected_when_audience_configured(monkeypatch):
-    monkeypatch.setenv("JWT_SECRET", "secret-key")
-    monkeypatch.delenv("JWT_ISSUER", raising=False)
-    monkeypatch.setenv("JWT_AUDIENCE", "laboria-frontend")
+    monkeypatch.setattr(app_settings, "JWT_SECRET", "secret-key")
+    monkeypatch.setattr(app_settings, "JWT_ISSUER", None)
+    monkeypatch.setattr(app_settings, "JWT_AUDIENCE", "laboria-frontend")
     now = datetime.now(timezone.utc)
     token = _encode_raw(
         {"sub": "user@example.com", "exp": now + timedelta(hours=1), "iat": now},
@@ -141,9 +141,9 @@ def test_token_without_aud_rejected_when_audience_configured(monkeypatch):
 
 
 def test_token_with_wrong_aud_rejected(monkeypatch):
-    monkeypatch.setenv("JWT_SECRET", "secret-key")
-    monkeypatch.delenv("JWT_ISSUER", raising=False)
-    monkeypatch.setenv("JWT_AUDIENCE", "laboria-frontend")
+    monkeypatch.setattr(app_settings, "JWT_SECRET", "secret-key")
+    monkeypatch.setattr(app_settings, "JWT_ISSUER", None)
+    monkeypatch.setattr(app_settings, "JWT_AUDIENCE", "laboria-frontend")
     now = datetime.now(timezone.utc)
     token = _encode_raw(
         {"sub": "user@example.com", "aud": "other-frontend",
@@ -159,9 +159,9 @@ def test_token_with_wrong_aud_rejected(monkeypatch):
 # ── sub validation ────────────────────────────────────────────────────────────
 
 def test_token_without_sub_rejected(monkeypatch):
-    monkeypatch.setenv("JWT_SECRET", "secret-key")
-    monkeypatch.delenv("JWT_ISSUER", raising=False)
-    monkeypatch.delenv("JWT_AUDIENCE", raising=False)
+    monkeypatch.setattr(app_settings, "JWT_SECRET", "secret-key")
+    monkeypatch.setattr(app_settings, "JWT_ISSUER", None)
+    monkeypatch.setattr(app_settings, "JWT_AUDIENCE", None)
     now = datetime.now(timezone.utc)
     token = _encode_raw(
         {"email": "user@example.com", "exp": now + timedelta(hours=1), "iat": now},
@@ -174,9 +174,9 @@ def test_token_without_sub_rejected(monkeypatch):
 
 
 def test_token_with_empty_sub_rejected(monkeypatch):
-    monkeypatch.setenv("JWT_SECRET", "secret-key")
-    monkeypatch.delenv("JWT_ISSUER", raising=False)
-    monkeypatch.delenv("JWT_AUDIENCE", raising=False)
+    monkeypatch.setattr(app_settings, "JWT_SECRET", "secret-key")
+    monkeypatch.setattr(app_settings, "JWT_ISSUER", None)
+    monkeypatch.setattr(app_settings, "JWT_AUDIENCE", None)
     now = datetime.now(timezone.utc)
     token = _encode_raw(
         {"sub": "   ", "exp": now + timedelta(hours=1), "iat": now},
@@ -191,9 +191,9 @@ def test_token_with_empty_sub_rejected(monkeypatch):
 # ── exp / iat validation ──────────────────────────────────────────────────────
 
 def test_token_without_exp_rejected(monkeypatch):
-    monkeypatch.setenv("JWT_SECRET", "secret-key")
-    monkeypatch.delenv("JWT_ISSUER", raising=False)
-    monkeypatch.delenv("JWT_AUDIENCE", raising=False)
+    monkeypatch.setattr(app_settings, "JWT_SECRET", "secret-key")
+    monkeypatch.setattr(app_settings, "JWT_ISSUER", None)
+    monkeypatch.setattr(app_settings, "JWT_AUDIENCE", None)
     now = datetime.now(timezone.utc)
     token = _encode_raw(
         {"sub": "user@example.com", "iat": now},
@@ -206,9 +206,9 @@ def test_token_without_exp_rejected(monkeypatch):
 
 
 def test_token_without_iat_rejected(monkeypatch):
-    monkeypatch.setenv("JWT_SECRET", "secret-key")
-    monkeypatch.delenv("JWT_ISSUER", raising=False)
-    monkeypatch.delenv("JWT_AUDIENCE", raising=False)
+    monkeypatch.setattr(app_settings, "JWT_SECRET", "secret-key")
+    monkeypatch.setattr(app_settings, "JWT_ISSUER", None)
+    monkeypatch.setattr(app_settings, "JWT_AUDIENCE", None)
     now = datetime.now(timezone.utc)
     token = _encode_raw(
         {"sub": "user@example.com", "exp": now + timedelta(hours=1)},
@@ -223,9 +223,9 @@ def test_token_without_iat_rejected(monkeypatch):
 # ── algorithm validation ──────────────────────────────────────────────────────
 
 def test_token_with_disallowed_algorithm_rejected(monkeypatch):
-    monkeypatch.setenv("JWT_SECRET", "secret-key")
-    monkeypatch.delenv("JWT_ISSUER", raising=False)
-    monkeypatch.delenv("JWT_AUDIENCE", raising=False)
+    monkeypatch.setattr(app_settings, "JWT_SECRET", "secret-key")
+    monkeypatch.setattr(app_settings, "JWT_ISSUER", None)
+    monkeypatch.setattr(app_settings, "JWT_AUDIENCE", None)
     now = datetime.now(timezone.utc)
     # RS256 no está en _ALLOWED_ALGORITHMS
     token = _encode_raw(
@@ -242,9 +242,9 @@ def test_token_with_disallowed_algorithm_rejected(monkeypatch):
 # ── TASK-031-01: mensaje "Invalid token claims" para iss/aud inválidos ────────
 
 def test_wrong_iss_returns_invalid_token_claims(monkeypatch):
-    monkeypatch.setenv("JWT_SECRET", "secret-key")
-    monkeypatch.setenv("JWT_ISSUER", "laboria-backend")
-    monkeypatch.delenv("JWT_AUDIENCE", raising=False)
+    monkeypatch.setattr(app_settings, "JWT_SECRET", "secret-key")
+    monkeypatch.setattr(app_settings, "JWT_ISSUER", "laboria-backend")
+    monkeypatch.setattr(app_settings, "JWT_AUDIENCE", None)
     now = datetime.now(timezone.utc)
     token = _encode_raw(
         {"sub": "user@example.com", "iss": "attacker",
@@ -259,9 +259,9 @@ def test_wrong_iss_returns_invalid_token_claims(monkeypatch):
 
 
 def test_wrong_aud_returns_invalid_token_claims(monkeypatch):
-    monkeypatch.setenv("JWT_SECRET", "secret-key")
-    monkeypatch.delenv("JWT_ISSUER", raising=False)
-    monkeypatch.setenv("JWT_AUDIENCE", "laboria-frontend")
+    monkeypatch.setattr(app_settings, "JWT_SECRET", "secret-key")
+    monkeypatch.setattr(app_settings, "JWT_ISSUER", None)
+    monkeypatch.setattr(app_settings, "JWT_AUDIENCE", "laboria-frontend")
     now = datetime.now(timezone.utc)
     token = _encode_raw(
         {"sub": "user@example.com", "aud": "wrong-audience",
@@ -276,9 +276,9 @@ def test_wrong_aud_returns_invalid_token_claims(monkeypatch):
 
 
 def test_missing_iss_returns_invalid_token_claims(monkeypatch):
-    monkeypatch.setenv("JWT_SECRET", "secret-key")
-    monkeypatch.setenv("JWT_ISSUER", "laboria-backend")
-    monkeypatch.delenv("JWT_AUDIENCE", raising=False)
+    monkeypatch.setattr(app_settings, "JWT_SECRET", "secret-key")
+    monkeypatch.setattr(app_settings, "JWT_ISSUER", "laboria-backend")
+    monkeypatch.setattr(app_settings, "JWT_AUDIENCE", None)
     now = datetime.now(timezone.utc)
     token = _encode_raw(
         {"sub": "user@example.com", "exp": now + timedelta(hours=1), "iat": now},
@@ -294,9 +294,9 @@ def test_missing_iss_returns_invalid_token_claims(monkeypatch):
 # ── error messages no exponen detalles sensibles ──────────────────────────────
 
 def test_error_detail_does_not_expose_secret(monkeypatch):
-    monkeypatch.setenv("JWT_SECRET", "my-super-secret")
-    monkeypatch.delenv("JWT_ISSUER", raising=False)
-    monkeypatch.delenv("JWT_AUDIENCE", raising=False)
+    monkeypatch.setattr(app_settings, "JWT_SECRET", "my-super-secret")
+    monkeypatch.setattr(app_settings, "JWT_ISSUER", None)
+    monkeypatch.setattr(app_settings, "JWT_AUDIENCE", None)
 
     with pytest.raises(Exception) as exc_info:
         core_jwt.decode_token("invalid.token.here")

@@ -1,6 +1,5 @@
 import json
 import logging
-import os
 from datetime import datetime, timezone
 from uuid import UUID as PyUUID
 
@@ -26,7 +25,9 @@ from schemas.group_interview_round import (
     GroupInterviewNextRoundRequestSchema,
     GroupInterviewRoundNextResponseSchema,
 )
-from services.answer_evaluator import run_evaluation_background
+from api.dependencies import get_group_orchestrator
+from core.config import settings
+from services.evaluation_background import run_evaluation_background
 from services.group_interview_orchestrator_service import GroupInterviewOrchestratorService
 from services.group_interview_session_service import GroupInterviewSessionService
 from services.websocket_service import manager
@@ -38,7 +39,7 @@ router = APIRouter(
 )
 
 logger = logging.getLogger(__name__)
-MAX_AUDIO_UPLOAD_BYTES = int(os.getenv("MAX_AUDIO_UPLOAD_BYTES", str(10 * 1024 * 1024)))
+MAX_AUDIO_UPLOAD_BYTES = settings.MAX_AUDIO_UPLOAD_BYTES
 _READ_CHUNK_SIZE = 1024 * 1024
 
 
@@ -194,6 +195,7 @@ async def start_group_session(
     response: Response,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
+    orchestrator: GroupInterviewOrchestratorService = Depends(get_group_orchestrator),
 ):
     """Iniciar una sesión grupal (solo el host y en estado waiting)."""
     service = GroupInterviewSessionService(db)
@@ -226,8 +228,6 @@ async def start_group_session(
             "started_at": _session_timestamp(session),
         },
     )
-
-    orchestrator = GroupInterviewOrchestratorService(db)
     try:
         intro_result = await orchestrator.generate_intro_round(
             session_code=session.session_code,
@@ -301,10 +301,9 @@ async def close_group_session(
 async def create_next_round(
     session_code: str,
     body: GroupInterviewNextRoundRequestSchema,
-    db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
+    orchestrator: GroupInterviewOrchestratorService = Depends(get_group_orchestrator),
 ):
-    orchestrator = GroupInterviewOrchestratorService(db)
 
     try:
         group_session, round_item, tts_result, event_payloads = await orchestrator.generate_next_round_question(

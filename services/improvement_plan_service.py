@@ -191,7 +191,6 @@ class ImprovementPlanService:
             ai_feedbacks = self._call_ai_for_feedback(pending_skills, recent_feedback, current_scores)
 
         # Rebuild items: keep completed, refresh pending/in_progress
-        completed_items = [i for i in plan.items if i.status == "completed"]
         for item in list(plan.items):
             if item.status != "completed":
                 self.db.delete(item)

@@ -5,13 +5,13 @@ from services.websocket_service import manager
 from services.group_interview_session_service import GroupInterviewSessionService
 from exceptions.interview_session_exceptions import InterviewSessionNotFoundError
 from core.database import SessionLocal
+from core.config import settings
 from services.token_service import validate_jwt_token
 import json
 import logging
-import os
 
 logger = logging.getLogger(__name__)
-WEBSOCKET_AUTH_REQUIRED = os.getenv("WEBSOCKET_AUTH_REQUIRED", "false").lower() == "true"
+WEBSOCKET_AUTH_REQUIRED = settings.WEBSOCKET_AUTH_REQUIRED
 
 #from core.database import get_db
 #from core.jwt import get_current_user

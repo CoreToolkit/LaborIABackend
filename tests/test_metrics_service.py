@@ -1,9 +1,8 @@
 # tests/test_metrics_service.py
 # Tests para UserMetricsService: calculate_average_score, score_by_category, score_by_skill, analyze_weak_areas
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-import pytest
 
 from models.evaluation import Evaluation, EvaluationStatus
 from services.metrics_service import UserMetricsService

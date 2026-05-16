@@ -1,12 +1,12 @@
 import datetime as dt
-import os
 import secrets
 from sqlalchemy.orm import Session
 
+from core.config import settings
 from models.refresh_token import RefreshToken, hash_token
 
 
-REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", 14))
+REFRESH_TOKEN_EXPIRE_DAYS = settings.REFRESH_TOKEN_EXPIRE_DAYS
 
 
 def _utcnow() -> dt.datetime:

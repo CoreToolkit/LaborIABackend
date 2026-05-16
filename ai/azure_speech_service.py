@@ -6,16 +6,13 @@ import threading
 import time
 from pathlib import Path
 from typing import Any
-from dotenv import load_dotenv
 import azure.cognitiveservices.speech as speechsdk
 
-load_dotenv()
+from core.config import settings
 
 logger = logging.getLogger(__name__)
 
-_AZURE_SPEECH_MAX_CONCURRENT = int(os.getenv("AZURE_SPEECH_MAX_CONCURRENT", "5"))
-_AZURE_SPEECH_ACQUIRE_TIMEOUT = int(os.getenv("AZURE_SPEECH_ACQUIRE_TIMEOUT", "5"))
-_azure_speech_semaphore = threading.BoundedSemaphore(_AZURE_SPEECH_MAX_CONCURRENT)
+_azure_speech_semaphore = threading.BoundedSemaphore(settings.AZURE_SPEECH_MAX_CONCURRENT)
 _azure_speech_state = threading.local()
 
 
@@ -25,8 +22,8 @@ class AzureSpeechService:
         speech_key: str = None,
         speech_region: str = None,
     ):
-        self.speech_key = speech_key or os.getenv("SPEECH_KEY")
-        self.speech_region = speech_region or os.getenv("SPEECH_REGION")
+        self.speech_key = speech_key or settings.SPEECH_KEY
+        self.speech_region = speech_region or settings.SPEECH_REGION
 
         missing = []
         if not self.speech_key:
@@ -45,7 +42,7 @@ class AzureSpeechService:
     def _acquire_slot(self) -> bool:
         if getattr(_azure_speech_state, "acquired", False):
             return False
-        acquired = _azure_speech_semaphore.acquire(True, _AZURE_SPEECH_ACQUIRE_TIMEOUT)
+        acquired = _azure_speech_semaphore.acquire(True, settings.AZURE_SPEECH_ACQUIRE_TIMEOUT)
         if not acquired:
             raise Exception("Azure Speech esta saturado temporalmente")
         _azure_speech_state.acquired = True

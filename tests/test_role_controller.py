@@ -4,6 +4,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from core.config import settings as app_settings
 
 pytest.importorskip("fastapi")
 pytest.importorskip("sqlalchemy")
@@ -197,7 +198,7 @@ def test_get_role_detail_returns_404_when_role_does_not_exist():
 
 
 def test_create_role_returns_201_for_admin(monkeypatch):
-    monkeypatch.setenv("ADMIN_EMAILS", "admin@example.com")
+    monkeypatch.setattr(app_settings, "ADMIN_EMAILS", "admin@example.com")
     technology = _create_technology("FastAPI")
     headers = _auth_headers_for_email("admin@example.com")
 
@@ -228,7 +229,7 @@ def test_create_role_returns_201_for_admin(monkeypatch):
 
 
 def test_create_role_returns_403_for_non_admin(monkeypatch):
-    monkeypatch.setenv("ADMIN_EMAILS", "admin@example.com")
+    monkeypatch.setattr(app_settings, "ADMIN_EMAILS", "admin@example.com")
     headers = _auth_headers_for_email("user@example.com")
 
     response = client.post(
@@ -247,7 +248,7 @@ def test_create_role_returns_403_for_non_admin(monkeypatch):
 
 
 def test_create_role_returns_422_for_invalid_schema(monkeypatch):
-    monkeypatch.setenv("ADMIN_EMAILS", "admin@example.com")
+    monkeypatch.setattr(app_settings, "ADMIN_EMAILS", "admin@example.com")
     headers = _auth_headers_for_email("admin@example.com")
 
     response = client.post(

@@ -16,7 +16,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 import api.sessions as sessions_module
-from core.database import Base
+from core.database import Base, get_db as _core_get_db
 from core.jwt import create_token
 from models.evaluation import Evaluation, EvaluationStatus
 from models.interview_session import InterviewSession
@@ -44,7 +44,7 @@ def reset_test_database():
         finally:
             db.close()
 
-    app.dependency_overrides[sessions_module.get_db] = override_db
+    app.dependency_overrides[_core_get_db] = override_db
     yield
     app.dependency_overrides.clear()
 

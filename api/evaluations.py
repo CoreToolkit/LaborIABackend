@@ -25,7 +25,7 @@ from core.jwt import get_current_user
 from models.evaluation import Evaluation, EvaluationStatus
 from models.interview_session import InterviewSession
 from models.question import Question
-from services.answer_evaluator import run_evaluation_background
+from services.evaluation_background import run_evaluation_background
 from services.interview_flow import (
     EVENT_EVALUATION_PENDING,
     EVALUATION_PENDING,
@@ -150,7 +150,6 @@ async def submit_answer(
         )
 
     # Disparar evaluación en background
-    # La función run_evaluation_background es síncrona y gestiona su propio event loop.
     background_tasks.add_task(
         run_evaluation_background,
         evaluation_id=str(evaluation.id),

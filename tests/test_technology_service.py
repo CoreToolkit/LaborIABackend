@@ -4,6 +4,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from core.config import settings as app_settings
 
 pytest.importorskip("sqlalchemy")
 
@@ -112,7 +113,7 @@ def test_list_technologies_returns_paginated_items():
 
 
 def test_create_update_and_detail_technology_flow(monkeypatch):
-    monkeypatch.setenv("ADMIN_EMAILS", "admin@example.com")
+    monkeypatch.setattr(app_settings, "ADMIN_EMAILS", "admin@example.com")
 
     db = TestSessionLocal()
     try:
@@ -141,7 +142,7 @@ def test_get_technology_detail_raises_not_found_for_unknown_id():
 
 
 def test_create_technology_raises_for_non_admin(monkeypatch):
-    monkeypatch.setenv("ADMIN_EMAILS", "admin@example.com")
+    monkeypatch.setattr(app_settings, "ADMIN_EMAILS", "admin@example.com")
 
     db = TestSessionLocal()
     try:
@@ -154,7 +155,7 @@ def test_create_technology_raises_for_non_admin(monkeypatch):
 
 
 def test_create_technology_raises_for_duplicate_name(monkeypatch):
-    monkeypatch.setenv("ADMIN_EMAILS", "admin@example.com")
+    monkeypatch.setattr(app_settings, "ADMIN_EMAILS", "admin@example.com")
     _create_technology("FastAPI")
 
     db = TestSessionLocal()
@@ -168,7 +169,7 @@ def test_create_technology_raises_for_duplicate_name(monkeypatch):
 
 
 def test_delete_technology_raises_when_in_use(monkeypatch):
-    monkeypatch.setenv("ADMIN_EMAILS", "admin@example.com")
+    monkeypatch.setattr(app_settings, "ADMIN_EMAILS", "admin@example.com")
     technology = _create_technology("FastAPI")
     role = _create_role()
     _create_role_skill(role.id, technology.id)
@@ -184,7 +185,7 @@ def test_delete_technology_raises_when_in_use(monkeypatch):
 
 
 def test_delete_technology_raises_not_found_for_unknown_id(monkeypatch):
-    monkeypatch.setenv("ADMIN_EMAILS", "admin@example.com")
+    monkeypatch.setattr(app_settings, "ADMIN_EMAILS", "admin@example.com")
 
     db = TestSessionLocal()
     try:

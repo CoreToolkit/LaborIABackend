@@ -5,7 +5,6 @@ from ai.ollama_client import OllamaClient
 from ai.question_deduplication import (
     merge_previous_questions,
     is_repeated_or_too_similar,
-    normalize_question,
     MAX_QUESTION_HISTORY,
     MAX_GENERATION_ATTEMPTS,
 )
