@@ -12,7 +12,6 @@ Arranque rápido:
   locust -f locustfile.py --host http://localhost:8000 --users 50 --spawn-rate 5 --run-time 5m
 """
 
-import json
 import logging
 import random
 import time

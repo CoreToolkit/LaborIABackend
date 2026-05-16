@@ -110,7 +110,6 @@ async def google_exchange(request: Request, db: Session = Depends(get_db)):
     try:
         data = await request.json()
         code = data.get("code")
-        state = data.get("state")
 
         redirect_uri = settings.GOOGLE_REDIRECT_URI
         token = await oauth.google.fetch_access_token(

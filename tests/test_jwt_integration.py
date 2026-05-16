@@ -6,7 +6,6 @@ import os
 from datetime import datetime, timezone, timedelta
 
 import jwt as pyjwt
-import pytest
 from core.config import settings as app_settings
 from fastapi import FastAPI
 from fastapi.testclient import TestClient

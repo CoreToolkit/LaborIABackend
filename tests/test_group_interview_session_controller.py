@@ -21,7 +21,6 @@ import services.group_interview_orchestrator_service as orchestrator_module
 from ai.azure_openai_provider import AzureOpenAIProvider
 from core.database import Base
 from core.jwt import create_token
-from models.group_interview_session import GroupInterviewSession
 from models.job_role import JobRole, JobRoleCategory, RoleEnglishLevel, SeniorityLevel
 from models.profile import EnglishLevel, Profile
 from models.user import User
@@ -32,7 +31,6 @@ from models.user import User
 # ---------------------------------------------------------------------------
 
 import base64 as _base64
-import asyncio as _asyncio
 
 
 def _tts_ok_result(text: str):

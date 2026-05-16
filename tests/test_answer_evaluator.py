@@ -25,8 +25,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from services.answer_evaluator import (
     evaluate_answer,
     _format_feedback,
-    _normalize,
-    _parse_json,
 )
 from services.evaluation_background import run_evaluation_background
 

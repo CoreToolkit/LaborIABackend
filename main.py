@@ -3,7 +3,6 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from core.database import engine, Base
-import models
 from fastapi.middleware.cors import CORSMiddleware
 
 

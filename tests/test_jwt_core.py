@@ -1,4 +1,3 @@
-import time
 import pytest
 from core.config import settings as app_settings
 import jwt as pyjwt

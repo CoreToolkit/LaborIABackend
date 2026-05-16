@@ -5,7 +5,6 @@ import logging
 import time
 from collections import Counter
 
-from sqlalchemy.orm import Session
 
 from ai.provider import LLMProvider
 from core.config import settings
@@ -19,7 +18,6 @@ from models.interview_session import InterviewSession
 from models.question import Question
 from services.global_question_service import GlobalQuestionService
 from services.group_interview_round_events import (
-    RoundEventPayloads,
     TTSResult,
     _TTS_SAFE_ERROR_MSG,
     build_round_event_payloads,

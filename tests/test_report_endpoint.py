@@ -4,7 +4,6 @@ from unittest.mock import MagicMock, patch
 os.environ.setdefault("DATABASE_URL", "sqlite:///test.db")
 os.environ.setdefault("JWT_SECRET", "test-secret")
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 

@@ -3,11 +3,9 @@ import json
 from urllib.parse import parse_qs, urlparse
 
 import httpx
-import pytest
 from fastapi.testclient import TestClient
 from main import app
 import api.auth as auth_module
-from core import jwt as core_jwt
 from core.config import settings as app_settings
 
 client = TestClient(app)

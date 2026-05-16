@@ -5,7 +5,6 @@ os.environ.setdefault("JWT_SECRET", "test-secret")
 
 from unittest.mock import MagicMock, patch
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
