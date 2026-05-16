@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy.orm import Session
 
-from core.database import get_db
+from api.dependencies import get_interview_session_service
 from core.jwt import get_current_user
 from exceptions.interview_session_exceptions import InterviewSessionNotFoundError
 from schemas.interview_session import InterviewSessionDetailResponse, InterviewSessionResponse
@@ -21,10 +20,9 @@ def list_sessions(
     limit: int | None = Query(default=None, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     include_meta: bool = Query(default=False),
-    db: Session = Depends(get_db),
+    service: InterviewSessionService = Depends(get_interview_session_service),
     current_user: dict = Depends(get_current_user),
 ):
-    service = InterviewSessionService(db)
     sessions = service.list_sessions(current_user["id"], limit=limit, offset=offset)
 
     response.status_code = status.HTTP_200_OK
@@ -42,11 +40,9 @@ def list_sessions(
 @router.post("")
 def create_session(
     response: Response,
-    db: Session = Depends(get_db),
+    service: InterviewSessionService = Depends(get_interview_session_service),
     current_user: dict = Depends(get_current_user),
 ):
-
-    service = InterviewSessionService(db)
     new_session = service.create_session(current_user["id"])
 
     session_snapshot = resolve_session_created_snapshot(
@@ -67,11 +63,9 @@ def create_session(
 def get_session_detail(
     session_id: int,
     response: Response,
-    db: Session = Depends(get_db),
+    service: InterviewSessionService = Depends(get_interview_session_service),
     current_user: dict = Depends(get_current_user),
 ):
-    service = InterviewSessionService(db)
-
     try:
         session = service.get_session_detail(current_user["id"], session_id)
     except InterviewSessionNotFoundError as exc:

@@ -30,7 +30,6 @@
 #   - score=-1 → fallo técnico (distinto de score=0 que es respuesta vacía)
 # ─────────────────────────────────────────────────────────────────────────────
 
-import asyncio
 import json
 import logging
 import time
@@ -203,31 +202,21 @@ async def evaluate_answer(
 
 # ── Función para BackgroundTasks (síncrona) ───────────────────────────────────
 
-def run_evaluation_background(
+async def run_evaluation_background(
     evaluation_id: str,
     question_text: str,
     expected_topics: list[str] | None,
     user_answer: str,
 ) -> None:
     """
-    Wrapper SÍNCRONO para FastAPI BackgroundTasks.
+    Wrapper ASYNC para FastAPI BackgroundTasks.
     Llama a evaluate_answer() y actualiza el registro Evaluation en DB al terminar.
-
-    Por qué asyncio.new_event_loop():
-        BackgroundTasks corre en el thread del servidor. Con un backend mixto
-        (sync/async) como este, crear un loop propio es la forma más segura de
-        ejecutar código async desde contexto sync. Si en el futuro se uniformiza
-        todo a async def, este bloque se reemplaza por un simple await.
     """
     start = time.monotonic()
 
     db: Session = SessionLocal()
     try:
-        loop   = asyncio.new_event_loop()
-        result = loop.run_until_complete(
-            evaluate_answer(question_text, expected_topics, user_answer)
-        )
-        loop.close()
+        result = await evaluate_answer(question_text, expected_topics, user_answer)
 
         duration_ms  = round((time.monotonic() - start) * 1000, 1)
         is_fallback  = result.get("score") == -1

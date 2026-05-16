@@ -150,7 +150,6 @@ async def submit_answer(
         )
 
     # Disparar evaluación en background
-    # La función run_evaluation_background es síncrona y gestiona su propio event loop.
     background_tasks.add_task(
         run_evaluation_background,
         evaluation_id=str(evaluation.id),
