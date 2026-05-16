@@ -27,7 +27,7 @@ from schemas.group_interview_round import (
 )
 from api.dependencies import get_group_orchestrator
 from core.config import settings
-from services.answer_evaluator import run_evaluation_background
+from services.evaluation_background import run_evaluation_background
 from services.group_interview_orchestrator_service import GroupInterviewOrchestratorService
 from services.group_interview_session_service import GroupInterviewSessionService
 from services.websocket_service import manager

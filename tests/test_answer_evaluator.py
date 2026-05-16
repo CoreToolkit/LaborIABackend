@@ -27,8 +27,8 @@ from services.answer_evaluator import (
     _format_feedback,
     _normalize,
     _parse_json,
-    run_evaluation_background,
 )
+from services.evaluation_background import run_evaluation_background
 
 
 # ── Casos conocidos (Task-013-05) ─────────────────────────────────────────────
@@ -278,15 +278,15 @@ class TestRunEvaluationBackground:
         evaluation.interview_session.user_id = 42
         select_query.join.return_value.filter.return_value.first.return_value = evaluation
 
-        with patch("services.answer_evaluator.SessionLocal", return_value=db), \
-             patch("services.answer_evaluator.evaluate_answer", AsyncMock(return_value={
+        with patch("services.evaluation_background.SessionLocal", return_value=db), \
+             patch("services.evaluation_background.evaluate_answer", AsyncMock(return_value={
                  "score": 88,
                  "score_breakdown": {"correctness": 90, "completeness": 85, "clarity": 80, "examples": 78},
                  "feedback": {"strengths": ["ok"], "improvements": [], "correction": None},
                  "topics_covered": ["t1"],
                  "topics_missing": [],
              })), \
-             patch("services.answer_evaluator.UserMetricsService") as MockMetricsService:
+             patch("services.evaluation_background.UserMetricsService") as MockMetricsService:
             await run_evaluation_background(
                 evaluation_id="123e4567-e89b-12d3-a456-426614174000",
                 question_text="What is Python?",
@@ -303,9 +303,9 @@ class TestRunEvaluationBackground:
         db.query.return_value = update_query
         update_query.filter.return_value.update.return_value = 1
 
-        with patch("services.answer_evaluator.SessionLocal", return_value=db), \
-             patch("services.answer_evaluator.evaluate_answer", AsyncMock(return_value={"score": -1})), \
-             patch("services.answer_evaluator.UserMetricsService") as MockMetricsService:
+        with patch("services.evaluation_background.SessionLocal", return_value=db), \
+             patch("services.evaluation_background.evaluate_answer", AsyncMock(return_value={"score": -1})), \
+             patch("services.evaluation_background.UserMetricsService") as MockMetricsService:
             await run_evaluation_background(
                 evaluation_id="123e4567-e89b-12d3-a456-426614174001",
                 question_text="What is Python?",
