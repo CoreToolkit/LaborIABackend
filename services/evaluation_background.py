@@ -17,7 +17,7 @@ from services.interview_flow import (
     resolve_next_state,
     to_evaluation_status,
 )
-from services.metrics_service import UserMetricsService
+from services.post_interview_trigger import trigger_post_evaluation
 
 logger = logging.getLogger(__name__)
 
@@ -84,42 +84,12 @@ async def run_evaluation_background(
                     .first()
                 )
                 if evaluation and evaluation.interview_session:
-                    user_id    = evaluation.interview_session.user_id
-                    session_id = evaluation.interview_session_id
-
-                    UserMetricsService(db).update_for_user(user_id)
-
-                    total_q = len(evaluation.interview_session.questions)
-                    completed_q = (
-                        db.query(func.count(Evaluation.id))
-                        .filter(
-                            Evaluation.interview_session_id == session_id,
-                            Evaluation.status == EvaluationStatus.COMPLETED,
-                            Evaluation.score >= 0,
-                        )
-                        .scalar()
-                        or 0
+                    trigger_post_evaluation(
+                        db,
+                        user_id=evaluation.interview_session.user_id,
+                        session_id=evaluation.interview_session_id,
+                        total_questions=len(evaluation.interview_session.questions),
                     )
-
-                    if total_q > 0 and completed_q >= total_q:
-                        session_evals = (
-                            db.query(Evaluation)
-                            .filter(
-                                Evaluation.interview_session_id == session_id,
-                                Evaluation.status == EvaluationStatus.COMPLETED,
-                                Evaluation.score >= 0,
-                            )
-                            .all()
-                        )
-                        valid = [e.score for e in session_evals if e.score is not None]
-                        session_score = round(sum(valid) / len(valid), 2) if valid else None
-
-                        from services.badge_service import BadgeService
-                        BadgeService(db).check_and_unlock_badges(
-                            user_id=user_id,
-                            session_id=session_id,
-                            session_score=session_score,
-                        )
             except Exception as metrics_exc:
                 logger.exception(
                     "run_evaluation_background: post-interview trigger failed for evaluation_id=%s — %s",

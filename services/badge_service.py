@@ -14,6 +14,7 @@ class BadgeService:
     def __init__(self, db: Session):
         self.db = db
         self.repo = BadgeRepository(db)
+        self._metrics = UserMetricsService(db)
 
     def get_user_badges_with_progress(self, user_id: int) -> list[dict]:
         """
@@ -21,7 +22,7 @@ class BadgeService:
         Used by GET /api/badges/me.
         """
         total_interviews = self._count_completed_sessions(user_id)
-        avg_score = UserMetricsService(self.db).calculate_average_score(user_id)
+        avg_score = self._metrics.calculate_average_score(user_id)
         best_session_score = self._get_best_session_score(user_id)
         best_improvement = self._get_best_score_improvement(user_id)
 
@@ -70,7 +71,6 @@ class BadgeService:
         return 0.0
 
     def _get_best_session_score(self, user_id: int) -> float | None:
-        from sqlalchemy import func as sqlfunc
         from models.evaluation import Evaluation, EvaluationStatus
         from models.interview_session import InterviewSession
 
@@ -100,7 +100,6 @@ class BadgeService:
         return round(best, 2) if best is not None else None
 
     def _get_best_score_improvement(self, user_id: int) -> float | None:
-        from sqlalchemy import func as sqlfunc
         from models.evaluation import Evaluation, EvaluationStatus
         from models.interview_session import InterviewSession
 
@@ -152,7 +151,7 @@ class BadgeService:
         """
         total_interviews = self._count_completed_sessions(user_id)
         previous_score = self._get_previous_session_score(user_id, session_id)
-        avg_score = UserMetricsService(self.db).calculate_average_score(user_id)
+        avg_score = self._metrics.calculate_average_score(user_id)
 
         context = {
             "session_score": session_score,
@@ -205,19 +204,7 @@ class BadgeService:
         return False
 
     def _count_completed_sessions(self, user_id: int) -> int:
-        from models.evaluation import Evaluation, EvaluationStatus
-        from models.interview_session import InterviewSession
-
-        return (
-            self.db.query(sqlfunc.count(sqlfunc.distinct(Evaluation.interview_session_id)))
-            .join(InterviewSession, Evaluation.interview_session_id == InterviewSession.id)
-            .filter(
-                InterviewSession.user_id == user_id,
-                Evaluation.status == EvaluationStatus.COMPLETED,
-            )
-            .scalar()
-            or 0
-        )
+        return self._metrics._count_completed_interviews(user_id)
 
     def _get_previous_session_score(self, user_id: int, current_session_id: int) -> float | None:
         from models.evaluation import Evaluation, EvaluationStatus

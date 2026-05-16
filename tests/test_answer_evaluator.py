@@ -286,7 +286,8 @@ class TestRunEvaluationBackground:
                  "topics_covered": ["t1"],
                  "topics_missing": [],
              })), \
-             patch("services.evaluation_background.UserMetricsService") as MockMetricsService:
+             patch("services.post_interview_trigger.UserMetricsService") as MockMetricsService, \
+             patch("services.post_interview_trigger.BadgeService"):
             await run_evaluation_background(
                 evaluation_id="123e4567-e89b-12d3-a456-426614174000",
                 question_text="What is Python?",
@@ -305,7 +306,8 @@ class TestRunEvaluationBackground:
 
         with patch("services.evaluation_background.SessionLocal", return_value=db), \
              patch("services.evaluation_background.evaluate_answer", AsyncMock(return_value={"score": -1})), \
-             patch("services.evaluation_background.UserMetricsService") as MockMetricsService:
+             patch("services.post_interview_trigger.UserMetricsService") as MockMetricsService, \
+             patch("services.post_interview_trigger.BadgeService"):
             await run_evaluation_background(
                 evaluation_id="123e4567-e89b-12d3-a456-426614174001",
                 question_text="What is Python?",
