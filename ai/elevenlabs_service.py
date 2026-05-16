@@ -1,13 +1,11 @@
 import asyncio
 import logging
-import os
 import threading
 import time
 
 import httpx
-from dotenv import load_dotenv
 
-load_dotenv()
+from core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -15,9 +13,7 @@ MAX_TTS_TEXT_LENGTH = 500
 _DEFAULT_TIMEOUT = 30
 _DEFAULT_MAX_RETRIES = 2
 _RETRY_BACKOFF_BASE = 1.0  # segundos; espera = base * intento
-_ELEVENLABS_MAX_CONCURRENT = int(os.getenv("ELEVENLABS_MAX_CONCURRENT", "5"))
-_ELEVENLABS_ACQUIRE_TIMEOUT = int(os.getenv("ELEVENLABS_ACQUIRE_TIMEOUT", "5"))
-_elevenlabs_semaphore = threading.BoundedSemaphore(_ELEVENLABS_MAX_CONCURRENT)
+_elevenlabs_semaphore = threading.BoundedSemaphore(settings.ELEVENLABS_MAX_CONCURRENT)
 
 
 class ElevenLabsService:
@@ -30,13 +26,11 @@ class ElevenLabsService:
         base_url: str = None,
         max_retries: int = None,
     ):
-        self.api_key = api_key or os.getenv("ELEVENLABS_API_KEY")
-        self.timeout = timeout or int(os.getenv("ELEVENLABS_TIMEOUT", str(_DEFAULT_TIMEOUT)))
-        self.max_retries = max_retries if max_retries is not None else int(
-            os.getenv("ELEVENLABS_MAX_RETRIES", str(_DEFAULT_MAX_RETRIES))
-        )
-        self.voice_id = voice_id or os.getenv("ELEVENLABS_VOICE_ID")
-        self.model_id = model_id or os.getenv("ELEVENLABS_MODEL_ID", "eleven_flash_v2_5")
+        self.api_key = api_key or settings.ELEVENLABS_API_KEY
+        self.timeout = timeout or settings.ELEVENLABS_TIMEOUT
+        self.max_retries = max_retries if max_retries is not None else settings.ELEVENLABS_MAX_RETRIES
+        self.voice_id = voice_id or settings.ELEVENLABS_VOICE_ID
+        self.model_id = model_id or settings.ELEVENLABS_MODEL_ID
         self.base_url = base_url or "https://api.elevenlabs.io/v1"
 
         if not self.api_key:
@@ -72,7 +66,6 @@ class ElevenLabsService:
         """
         Realiza POST con timeout explícito usando un cliente por llamada.
         Sin reintentos (usar generate_speech_with_retry para eso).
-        El cliente se cierra correctamente al salir del bloque async with.
         """
         request_headers = dict(self.headers)
         if headers:
@@ -113,7 +106,7 @@ class ElevenLabsService:
         acquired = await asyncio.to_thread(
             _elevenlabs_semaphore.acquire,
             True,
-            _ELEVENLABS_ACQUIRE_TIMEOUT,
+            settings.ELEVENLABS_ACQUIRE_TIMEOUT,
         )
         if not acquired:
             raise Exception("ElevenLabs esta saturado temporalmente")
@@ -157,7 +150,6 @@ class ElevenLabsService:
             try:
                 return await self.generate_speech(text)
             except ValueError:
-                # Error de validación de entrada: no tiene sentido reintentar
                 raise
             except Exception as exc:
                 last_exc = exc

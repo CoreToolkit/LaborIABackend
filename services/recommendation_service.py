@@ -17,9 +17,10 @@ import logging
 from sqlalchemy.orm import Session
 
 from ai.azure_openai_client import AzureOpenAIClient
+from core.config import settings
 from repositories.match_result_repository import MatchResultRepository
 from repositories.profile_repository import ProfileRepository
-from services.matching_service import MatchingService
+from services.match_calculator import detect_skill_gaps_for_role
 from utils.string_normalization import normalize_skill_name
 
 logger = logging.getLogger(__name__)
@@ -34,7 +35,7 @@ _REASON_SYSTEM_PROMPT = (
 
 def _detect_skill_gaps_top3(normalized_user_skills: set[str], role) -> list[dict]:
     """Retorna top 3 skill gaps (name, importance_weight) para el rol dado."""
-    all_gaps = MatchingService._detect_skill_gaps_for_role(normalized_user_skills, role)
+    all_gaps = detect_skill_gaps_for_role(normalized_user_skills, role)
     # Ordenar por importance_weight desc y tomar top 3
     sorted_gaps = sorted(all_gaps, key=lambda g: g["importance_weight"], reverse=True)
     return [{"name": g["name"], "importance_weight": g["importance_weight"]} for g in sorted_gaps[:3]]
@@ -55,8 +56,11 @@ def _priority_from_gaps(skill_gaps: list[dict]) -> str:
 async def _generate_reason(role_name: str, match_score: float, skill_gaps: list[dict]) -> str:
     """
     Llama a Azure OpenAI para generar el campo reason.
-    Fallback a texto genérico si falla — nunca lanza excepción.
+    Fallback a texto genérico si falla o si ENABLE_LLM_REASON_GENERATION=False.
     """
+    if not settings.ENABLE_LLM_REASON_GENERATION:
+        return _fallback_reason(role_name, match_score)
+
     try:
         client = AzureOpenAIClient()
 
@@ -129,7 +133,7 @@ class RecommendationService:
                 return None
 
             match_score = float(match_result.total_score)
-            skill_gaps = MatchingService._detect_skill_gaps_for_role(normalized_skills, role)
+            skill_gaps = detect_skill_gaps_for_role(normalized_skills, role)
             priority = _priority_from_gaps(skill_gaps)
             reason = await _generate_reason(role.name, match_score, skill_gaps)
 

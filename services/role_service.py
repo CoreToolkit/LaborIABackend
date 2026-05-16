@@ -1,6 +1,6 @@
-import os
 from uuid import UUID
 
+from core.config import settings
 from exceptions.role_exceptions import RoleAuthorizationError, RoleNotFoundError, RoleValidationError
 from sqlalchemy.orm import Session
 
@@ -48,7 +48,7 @@ class RoleService:
 
     @staticmethod
     def _get_admin_emails() -> set[str]:
-        raw = os.getenv("ADMIN_EMAILS", "")
+        raw = settings.ADMIN_EMAILS
         return {email.strip().lower() for email in raw.split(",") if email.strip()}
 
     @classmethod

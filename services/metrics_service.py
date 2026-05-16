@@ -22,7 +22,6 @@ from sqlalchemy.orm import Session, joinedload
 
 from models.evaluation import Evaluation, EvaluationStatus
 from models.interview_session import InterviewSession
-from models.question import Question
 
 
 class UserMetricsService:

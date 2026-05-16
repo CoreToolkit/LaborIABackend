@@ -25,10 +25,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from services.answer_evaluator import (
     evaluate_answer,
     _format_feedback,
-    _normalize,
-    _parse_json,
-    run_evaluation_background,
 )
+from services.evaluation_background import run_evaluation_background
 
 
 # ── Casos conocidos (Task-013-05) ─────────────────────────────────────────────
@@ -264,7 +262,8 @@ class TestFallbacks:
 
 
 class TestRunEvaluationBackground:
-    def test_actualiza_metricas_del_usuario_si_la_evaluacion_completa(self):
+    @pytest.mark.asyncio
+    async def test_actualiza_metricas_del_usuario_si_la_evaluacion_completa(self):
         db = MagicMock()
         update_query = MagicMock()
         select_query = MagicMock()
@@ -277,16 +276,17 @@ class TestRunEvaluationBackground:
         evaluation.interview_session.user_id = 42
         select_query.join.return_value.filter.return_value.first.return_value = evaluation
 
-        with patch("services.answer_evaluator.SessionLocal", return_value=db), \
-             patch("services.answer_evaluator.evaluate_answer", AsyncMock(return_value={
+        with patch("services.evaluation_background.SessionLocal", return_value=db), \
+             patch("services.evaluation_background.evaluate_answer", AsyncMock(return_value={
                  "score": 88,
                  "score_breakdown": {"correctness": 90, "completeness": 85, "clarity": 80, "examples": 78},
                  "feedback": {"strengths": ["ok"], "improvements": [], "correction": None},
                  "topics_covered": ["t1"],
                  "topics_missing": [],
              })), \
-             patch("services.answer_evaluator.UserMetricsService") as MockMetricsService:
-            run_evaluation_background(
+             patch("services.post_interview_trigger.UserMetricsService") as MockMetricsService, \
+             patch("services.post_interview_trigger.BadgeService"):
+            await run_evaluation_background(
                 evaluation_id="123e4567-e89b-12d3-a456-426614174000",
                 question_text="What is Python?",
                 expected_topics=["syntax"],
@@ -295,16 +295,18 @@ class TestRunEvaluationBackground:
 
         MockMetricsService.return_value.update_for_user.assert_called_once_with(42)
 
-    def test_no_actualiza_metricas_si_la_evaluacion_falla(self):
+    @pytest.mark.asyncio
+    async def test_no_actualiza_metricas_si_la_evaluacion_falla(self):
         db = MagicMock()
         update_query = MagicMock()
         db.query.return_value = update_query
         update_query.filter.return_value.update.return_value = 1
 
-        with patch("services.answer_evaluator.SessionLocal", return_value=db), \
-             patch("services.answer_evaluator.evaluate_answer", AsyncMock(return_value={"score": -1})), \
-             patch("services.answer_evaluator.UserMetricsService") as MockMetricsService:
-            run_evaluation_background(
+        with patch("services.evaluation_background.SessionLocal", return_value=db), \
+             patch("services.evaluation_background.evaluate_answer", AsyncMock(return_value={"score": -1})), \
+             patch("services.post_interview_trigger.UserMetricsService") as MockMetricsService, \
+             patch("services.post_interview_trigger.BadgeService"):
+            await run_evaluation_background(
                 evaluation_id="123e4567-e89b-12d3-a456-426614174001",
                 question_text="What is Python?",
                 expected_topics=["syntax"],

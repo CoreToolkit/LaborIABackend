@@ -1,7 +1,6 @@
 from dotenv import load_dotenv
 from core.database import SessionLocal, Base, engine
 from services.user_service import UserService
-from models.user import User
 
 
 def test_user_service_get_or_create_creates_once():

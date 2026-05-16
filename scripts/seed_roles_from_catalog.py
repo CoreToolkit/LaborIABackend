@@ -13,11 +13,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-import models  # noqa: F401 - ensures model metadata is loaded
-from core.database import SessionLocal
-from models.job_role import JobRole, JobRoleCategory, RoleEnglishLevel, SeniorityLevel
-from models.role_skill import RoleSkill
-from models.technology import Technology
+import models  # noqa: E402, F401 - ensures model metadata is loaded
+from core.database import SessionLocal  # noqa: E402
+from models.job_role import JobRole, JobRoleCategory, RoleEnglishLevel, SeniorityLevel  # noqa: E402
+from models.role_skill import RoleSkill  # noqa: E402
+from models.technology import Technology  # noqa: E402
 
 CATEGORY_MAP = {
     "software": JobRoleCategory.TECH,

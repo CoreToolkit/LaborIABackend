@@ -17,7 +17,6 @@ import api.recommendations as recommendations_module
 from core.database import get_db
 from core.jwt import get_current_user
 from services.recommendation_service import (
-    RecommendationService,
     _fallback_reason,
     _generate_reason,
     _priority_from_gaps,

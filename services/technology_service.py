@@ -1,5 +1,3 @@
-import os
-
 from sqlalchemy.orm import Session
 
 from exceptions.technology_exceptions import (
@@ -8,6 +6,7 @@ from exceptions.technology_exceptions import (
     TechnologyNotFoundError,
     TechnologyValidationError,
 )
+from core.config import settings
 from repositories.technology_repository import TechnologyRepository
 from schemas.technology import TechnologyCreate, TechnologyUpdate
 
@@ -18,7 +17,7 @@ class TechnologyService:
 
     @staticmethod
     def _get_admin_emails() -> set[str]:
-        raw = os.getenv("ADMIN_EMAILS", "")
+        raw = settings.ADMIN_EMAILS
         return {email.strip().lower() for email in raw.split(",") if email.strip()}
 
     @classmethod

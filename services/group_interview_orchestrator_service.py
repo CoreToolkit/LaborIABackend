@@ -4,11 +4,10 @@ import base64
 import logging
 import time
 from collections import Counter
-from datetime import datetime, timezone
 
-from sqlalchemy.orm import Session
 
-from ai.azure_openai_client import AzureOpenAIClient
+from ai.provider import LLMProvider
+from core.config import settings
 from ai.question_deduplication import (
     MAX_GENERATION_ATTEMPTS,
     is_repeated_or_too_similar,
@@ -17,70 +16,38 @@ from ai.question_deduplication import (
 from exceptions.profile_exceptions import ProfileNotFoundError
 from models.interview_session import InterviewSession
 from models.question import Question
+from services.global_question_service import GlobalQuestionService
+from services.group_interview_round_events import (
+    TTSResult,
+    _TTS_SAFE_ERROR_MSG,
+    build_round_event_payloads,
+    build_intro_text,
+    is_intro_round,
+)
 from services.group_interview_round_service import GroupInterviewRoundService
 from services.group_interview_session_service import GroupInterviewSessionService
-from services.global_question_service import GlobalQuestionService
 from services.profile_service import ProfileService
 from utils.prompts.question_generation import build_group_question_generation_prompts
 
 logger = logging.getLogger(__name__)
 
-# Mensaje seguro expuesto al cliente cuando TTS falla.
-# No expone detalles del proveedor (AB#325 sanitización).
-_TTS_SAFE_ERROR_MSG = "El audio no está disponible en este momento. La pregunta se muestra en texto."
-
-
-class TTSResult:
-    """
-    Resultado TTS devuelto por el orquestador.
-
-    audio_b64   : audio mp3 en base64 o None si TTS falló (fallback)
-    tts_status  : "ok" | "fallback"
-    tts_error   : mensaje seguro para el cliente (nunca detalle crudo del proveedor)
-    tts_elapsed_ms: tiempo de la llamada TTS en ms
-    """
-    __slots__ = ("audio_b64", "tts_status", "tts_error", "tts_elapsed_ms")
-
-    def __init__(
-        self,
-        audio_b64: str | None,
-        tts_status: str,
-        tts_error: str | None = None,
-        tts_elapsed_ms: int | None = None,
-    ):
-        self.audio_b64 = audio_b64
-        self.tts_status = tts_status
-        self.tts_error = tts_error
-        self.tts_elapsed_ms = tts_elapsed_ms
-
-
-class RoundEventPayloads:
-    """
-    Payloads de eventos websocket para una ronda.
-    AB#323: la decisión de qué eventos emitir queda encapsulada en el orquestador,
-    no en el router.
-    """
-    __slots__ = ("round_started", "question_generated", "audio_event")
-
-    def __init__(
-        self,
-        round_started: dict,
-        question_generated: dict,
-        audio_event: dict,
-    ):
-        self.round_started = round_started
-        self.question_generated = question_generated
-        self.audio_event = audio_event
-
 
 class GroupInterviewOrchestratorService:
-    def __init__(self, db):
+    def __init__(self, db, llm_provider: LLMProvider | None = None):
         self.db = db
         self.profile_service = ProfileService(db)
         self.group_session_service = GroupInterviewSessionService(db)
         self.round_service = GroupInterviewRoundService(db)
         self.global_question_service = GlobalQuestionService(db)
-        self.azure_client = AzureOpenAIClient()
+        if llm_provider is not None:
+            self._llm_provider: LLMProvider | None = llm_provider
+        else:
+            try:
+                from ai.provider_factory import create_llm_provider
+                self._llm_provider = create_llm_provider()
+            except Exception as exc:
+                logger.warning("LLM provider not available: %s", exc)
+                self._llm_provider = None
 
         # ElevenLabs es opcional: si no está configurado, el flujo continúa sin TTS
         self._elevenlabs_client = None
@@ -149,7 +116,7 @@ class GroupInterviewOrchestratorService:
         effective_difficulty = difficulty or group_session.difficulty or "adaptive"
         previous_rounds = self.round_service.round_repo.list_by_session_id(group_session.id)
         session_round_count = len(
-            [item for item in previous_rounds if not self._is_intro_round(item)]
+            [item for item in previous_rounds if not is_intro_round(item)]
         )
         global_previous_questions = self.global_question_service.list_all_questions_texts()
 
@@ -189,7 +156,7 @@ class GroupInterviewOrchestratorService:
                 )
 
             try:
-                generated_question = await self.azure_client.ask(
+                generated_question = await self._llm_provider.ask(
                     question=prompt,
                     system_prompt=system_prompt,
                     temperature=0.8,
@@ -252,7 +219,7 @@ class GroupInterviewOrchestratorService:
         self._persist_round_questions(group_session_id=group_session.id, round_item=round_item)
 
         # AB#323: construir payloads de eventos aquí, no en el router
-        event_payloads = self._build_round_event_payloads(
+        event_payloads = build_round_event_payloads(
             session_code=group_session.session_code,
             round_item=round_item,
             tts_result=tts_result,
@@ -284,7 +251,7 @@ class GroupInterviewOrchestratorService:
 
         role_name = group_session.role.name if group_session.role else "rol tecnico"
         role_description = group_session.role.description if group_session.role else ""
-        intro_text = self._build_intro_text(role_name=role_name, role_description=role_description)
+        intro_text = build_intro_text(role_name=role_name, role_description=role_description)
 
         tts_result = await self._generate_tts_with_fallback(intro_text)
 
@@ -308,7 +275,7 @@ class GroupInterviewOrchestratorService:
             assigned_user_id=None,
         )
 
-        event_payloads = self._build_round_event_payloads(
+        event_payloads = build_round_event_payloads(
             session_code=group_session.session_code,
             round_item=round_item,
             tts_result=tts_result,
@@ -413,84 +380,6 @@ class GroupInterviewOrchestratorService:
             )
 
     # ------------------------------------------------------------------
-    # Construcción de eventos (AB#323)
-    # ------------------------------------------------------------------
-
-    def _build_round_event_payloads(
-        self,
-        *,
-        session_code: str,
-        round_item,
-        tts_result: TTSResult,
-    ) -> RoundEventPayloads:
-        """
-        Construye los tres payloads de eventos para una ronda.
-        Incluye assigned_user_id en todos los eventos para que el frontend
-        pueda determinar quién debe grabar y responder.
-        El router solo hace broadcast; la lógica de decisión queda aquí.
-        """
-        emitted_at = datetime.now(timezone.utc).isoformat()
-        round_id = str(round_item.id)
-        is_intro = self._is_intro_round(round_item)
-        assigned_user_id = round_item.assigned_user_id  # None en la intro
-
-        round_started = {
-            "event": "round_started",
-            "session_code": session_code,
-            "round_id": round_id,
-            "round_index": round_item.round_index,
-            "is_intro": is_intro,
-            "assigned_user_id": assigned_user_id,
-            "emitted_at": emitted_at,
-        }
-
-        question_generated = {
-            "event": "question_generated",
-            "session_code": session_code,
-            "round_id": round_id,
-            "round_index": round_item.round_index,
-            "question_text": round_item.question_text,
-            "target_skill": round_item.target_skill,
-            "difficulty": round_item.difficulty,
-            "is_intro": is_intro,
-            "assigned_user_id": assigned_user_id,
-            "emitted_at": emitted_at,
-        }
-
-        # AB#326: question_audio_ready solo si TTS ok; tts_error si falló
-        if tts_result.tts_status == "ok":
-            audio_event = {
-                "event": "question_audio_ready",
-                "session_code": session_code,
-                "round_id": round_id,
-                "round_index": round_item.round_index,
-                "audio_b64": tts_result.audio_b64,
-                "question_text": round_item.question_text,
-                "is_intro": is_intro,
-                "assigned_user_id": assigned_user_id,
-                "emitted_at": emitted_at,
-            }
-        else:
-            audio_event = {
-                "event": "tts_error",
-                "session_code": session_code,
-                "round_id": round_id,
-                "round_index": round_item.round_index,
-                # AB#325: mensaje seguro, nunca detalle crudo del proveedor
-                "tts_error": tts_result.tts_error or _TTS_SAFE_ERROR_MSG,
-                "question_text": round_item.question_text,
-                "is_intro": is_intro,
-                "assigned_user_id": assigned_user_id,
-                "emitted_at": emitted_at,
-            }
-
-        return RoundEventPayloads(
-            round_started=round_started,
-            question_generated=question_generated,
-            audio_event=audio_event,
-        )
-
-    # ------------------------------------------------------------------
     # TTS con fallback (AB#323, AB#324, AB#325)
     # ------------------------------------------------------------------
 
@@ -500,6 +389,10 @@ class GroupInterviewOrchestratorService:
         Si falla: retorna TTSResult con tts_status="fallback", sin lanzar excepción.
         El mensaje de error expuesto al cliente es siempre el mensaje seguro.
         """
+        if not settings.ENABLE_TTS:
+            logger.info("TTS deshabilitado por ENABLE_TTS=False, usando fallback de texto")
+            return TTSResult(audio_b64=None, tts_status="fallback", tts_error=_TTS_SAFE_ERROR_MSG)
+
         if self._elevenlabs_client is None:
             logger.info("TTS deshabilitado (ElevenLabs no configurado), usando fallback de texto")
             return TTSResult(
@@ -530,25 +423,3 @@ class GroupInterviewOrchestratorService:
                 tts_elapsed_ms=tts_elapsed_ms,
             )
 
-    @staticmethod
-    def _is_intro_round(round_item) -> bool:
-        metadata = getattr(round_item, "metadata_json", None)
-        if isinstance(metadata, dict):
-            return bool(metadata.get("is_intro"))
-        return False
-
-    @staticmethod
-    def _build_intro_text(*, role_name: str, role_description: str) -> str:
-        role_name = role_name.strip() or "rol tecnico"
-        role_description = role_description.strip()
-        intro = (
-            "Bienvenidos a la entrevista grupal de LaborIA. "
-            f"Nos enfocaremos en el rol {role_name}. "
-        )
-        if role_description:
-            intro += f"Este rol se centra en {role_description}. "
-        intro += (
-            "Hablaremos de tu experiencia, los retos mas comunes del rol y "
-            "como abordarias situaciones reales. Empecemos."
-        )
-        return intro
